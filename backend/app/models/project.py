@@ -48,6 +48,7 @@ class Project:
     simulation_requirement: Optional[str] = None
     chunk_size: int = 500
     chunk_overlap: int = 50
+    web_research: Optional[Dict[str, Any]] = None
 
     # Error information
     error: Optional[str] = None
@@ -69,6 +70,7 @@ class Project:
             "simulation_requirement": self.simulation_requirement,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
+            "web_research": self.web_research,
             "error": self.error
         }
     
@@ -94,6 +96,7 @@ class Project:
             simulation_requirement=data.get('simulation_requirement'),
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
+            web_research=data.get('web_research'),
             error=data.get('error')
         )
 
@@ -128,6 +131,11 @@ class ProjectManager:
     def _get_project_text_path(cls, project_id: str) -> str:
         """Get project extracted text storage path"""
         return os.path.join(cls._get_project_dir(project_id), 'extracted_text.txt')
+
+    @classmethod
+    def _get_project_research_path(cls, project_id: str) -> str:
+        """Get generated web research markdown path."""
+        return os.path.join(cls._get_project_dir(project_id), 'web_research.md')
 
     @classmethod
     def create_project(cls, name: str = "Unnamed Project") -> Project:
@@ -279,6 +287,14 @@ class ProjectManager:
             f.write(text)
 
     @classmethod
+    def save_web_research(cls, project_id: str, markdown: str) -> str:
+        """Save generated web research markdown."""
+        research_path = cls._get_project_research_path(project_id)
+        with open(research_path, 'w', encoding='utf-8') as f:
+            f.write(markdown)
+        return research_path
+
+    @classmethod
     def get_extracted_text(cls, project_id: str) -> Optional[str]:
         """Get extracted text"""
         text_path = cls._get_project_text_path(project_id)
@@ -302,4 +318,3 @@ class ProjectManager:
             for f in os.listdir(files_dir)
             if os.path.isfile(os.path.join(files_dir, f))
         ]
-

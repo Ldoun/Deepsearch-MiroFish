@@ -17,6 +17,17 @@ else:
     load_dotenv(override=True)
 
 
+def _env_bool(name: str, default: str = 'false') -> bool:
+    return os.environ.get(name, default).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None or str(value).strip() == '':
+        return default
+    return int(value)
+
+
 class Config:
     """Flask configuration class"""
 
@@ -68,6 +79,15 @@ class Config:
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
+
+    # Optional SearXNG-backed web research enrichment
+    WEB_RESEARCH_ENABLED = _env_bool('WEB_RESEARCH_ENABLED', 'false')
+    WEB_RESEARCH_SEARXNG_URL = os.environ.get('WEB_RESEARCH_SEARXNG_URL') or None
+    WEB_RESEARCH_MIN_LOOPS = _env_int('WEB_RESEARCH_MIN_LOOPS', 2)
+    WEB_RESEARCH_MAX_LOOPS = _env_int('WEB_RESEARCH_MAX_LOOPS', 5)
+    WEB_RESEARCH_RESULTS_PER_QUERY = _env_int('WEB_RESEARCH_RESULTS_PER_QUERY', 5)
+    WEB_RESEARCH_TIMEOUT_SECONDS = _env_int('WEB_RESEARCH_TIMEOUT_SECONDS', 20)
+    WEB_RESEARCH_MAX_SOURCE_BYTES = _env_int('WEB_RESEARCH_MAX_SOURCE_BYTES', 200000)
 
     @classmethod
     def validate(cls):

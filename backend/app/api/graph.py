@@ -13,6 +13,12 @@ from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
 from ..services.text_processor import TextProcessor
+from ..services.web_research import (
+    WEB_RESEARCH_SECTION_HEADER,
+    WebResearchConfig,
+    WebResearchError,
+    WebResearchService,
+)
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
 from ..models.task import TaskManager, TaskStatus
@@ -214,6 +220,38 @@ def generate_ontology():
                 "error": "No documents successfully processed. Please check file format"
             }), 400
 
+        # Optional synchronous web research enrichment
+        project.web_research = WebResearchService.disabled_metadata()
+        research_config = WebResearchConfig.from_config(Config)
+        if research_config.enabled:
+            try:
+                research_service = WebResearchService(config=research_config)
+                research_result = research_service.run(
+                    document_texts=document_texts,
+                    simulation_requirement=simulation_requirement,
+                    additional_context=additional_context if additional_context else None,
+                )
+                ProjectManager.save_web_research(project.project_id, research_result.markdown)
+                research_section = f"{WEB_RESEARCH_SECTION_HEADER}\n{research_result.markdown}"
+                all_text += f"\n\n{research_section}"
+                document_texts.append(research_section)
+                project.web_research = research_result.metadata
+            except WebResearchError as exc:
+                ProjectManager.delete_project(project.project_id)
+                return jsonify({
+                    "success": False,
+                    "error": str(exc),
+                    "web_research": {
+                        "enabled": True,
+                        "status": "failed",
+                        "iterations": 0,
+                        "source_count": 0,
+                        "sources": [],
+                        "summary_path": None,
+                        "error": str(exc),
+                    }
+                }), 502
+
         # Save extracted text
         project.total_text_length = len(all_text)
         ProjectManager.save_extracted_text(project.project_id, all_text)
@@ -250,7 +288,8 @@ def generate_ontology():
                 "ontology": project.ontology,
                 "analysis_summary": project.analysis_summary,
                 "files": project.files,
-                "total_text_length": project.total_text_length
+                "total_text_length": project.total_text_length,
+                "web_research": project.web_research
             }
         })
         

@@ -5,6 +5,15 @@ Business Services Module
 from .ontology_generator import OntologyGenerator
 from .graph_builder import GraphBuilderService
 from .text_processor import TextProcessor
+from .web_research import (
+    WEB_RESEARCH_SECTION_HEADER,
+    SearXNGClient,
+    SafeUrlFetcher,
+    WebResearchConfig,
+    WebResearchError,
+    WebResearchResult,
+    WebResearchService,
+)
 from .entity_reader import EntityReader, EntityNode, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
@@ -41,6 +50,13 @@ __all__ = [
     'OntologyGenerator',
     'GraphBuilderService',
     'TextProcessor',
+    'WEB_RESEARCH_SECTION_HEADER',
+    'SearXNGClient',
+    'SafeUrlFetcher',
+    'WebResearchConfig',
+    'WebResearchError',
+    'WebResearchResult',
+    'WebResearchService',
     'EntityReader',
     'EntityNode',
     'FilteredEntities',
