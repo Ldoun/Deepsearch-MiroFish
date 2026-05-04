@@ -20,13 +20,13 @@
           </div>
 
           <h1 class="main-title" :style="s.mainTitle">
-            Upload Any Document<br>
+            Describe Any Scenario<br>
             <span class="gradient-text" :style="s.gradientText">Predict What Happens Next</span>
           </h1>
 
           <div class="hero-desc" :style="s.heroDesc">
             <p :style="s.heroDescP">
-              From a single document, <span :style="s.highlightBold">MiroFish Offline</span> extracts reality seeds and builds a parallel world of <span :style="s.highlightOrange">autonomous AI agents</span> — running entirely on your machine. Inject variables, observe emergent behavior, and find <span :style="s.highlightCode">"local optima"</span> in complex social dynamics.
+              From a simulation prompt, <span :style="s.highlightBold">MiroFish Offline</span> generates a web research seed and builds a parallel world of <span :style="s.highlightOrange">autonomous AI agents</span> — running through local services. Inject variables, observe emergent behavior, and find <span :style="s.highlightCode">"local optima"</span> in complex social dynamics.
             </p>
             <p class="slogan-text" :style="s.sloganText">
               Your data never leaves your machine. The future is simulated locally<span :style="s.blinkingCursor">_</span>
@@ -40,7 +40,9 @@
           <div class="logo-container" :style="s.logoContainer">
             <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" :style="s.heroLogo" />
           </div>
-          <button :style="s.scrollDownBtn" @click="scrollToBottom">↓</button>
+          <button :style="s.scrollDownBtn" type="button" aria-label="Scroll to Start Engine" @click="scrollToBottom">
+            <span aria-hidden="true">↓</span>
+          </button>
         </div>
       </section>
 
@@ -54,7 +56,7 @@
 
           <h2 class="section-title" :style="s.sectionTitle">Ready</h2>
           <p class="section-desc" :style="s.sectionDesc">
-            Local prediction engine on standby. Upload unstructured data to initialize a simulation.
+            Local prediction engine on standby. Enter a scenario prompt to initialize a simulation.
           </p>
 
           <div class="metrics-row" :style="s.metricsRow">
@@ -64,7 +66,7 @@
             </div>
             <div class="metric-card" :style="s.metricCard">
               <div class="metric-value" :style="s.metricValue">Private</div>
-              <div class="metric-label" :style="s.metricLabel">100% offline, no cloud</div>
+              <div class="metric-label" :style="s.metricLabel">Local stack, no cloud keys</div>
             </div>
           </div>
 
@@ -89,50 +91,30 @@
           <div class="console-box" :style="s.consoleBox">
             <div :style="s.consoleSection">
               <div class="console-header" :style="s.consoleHeader">
-                <span>01 / Reality Seeds</span>
-                <span>Supported: PDF, MD, TXT</span>
-              </div>
-              <div
-                :style="s.uploadZone"
-                @dragover.prevent="handleDragOver"
-                @dragleave.prevent="handleDragLeave"
-                @drop.prevent="handleDrop"
-                @click="triggerFileInput"
-              >
-                <input ref="fileInput" type="file" multiple accept=".pdf,.md,.txt" @change="handleFileSelect" style="display: none" :disabled="loading" />
-                <div v-if="files.length === 0" :style="s.uploadPlaceholder">
-                  <div :style="s.uploadIcon">↑</div>
-                  <div :style="s.uploadTitle">Drag & drop files here</div>
-                  <div :style="s.uploadHint">or click to browse</div>
-                </div>
-                <div v-else :style="s.fileList">
-                  <div v-for="(file, index) in files" :key="index" :style="s.fileItem">
-                    <span>📄</span>
-                    <span :style="s.fileName">{{ file.name }}</span>
-                    <button @click.stop="removeFile(index)" :style="s.removeBtn">×</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div :style="s.consoleDivider"><span :style="s.consoleDividerText">Parameters</span></div>
-
-            <div :style="s.consoleSection">
-              <div class="console-header" :style="s.consoleHeader">
-                <span>>_ 02 / Simulation Prompt</span>
+                <span>01 / Web Research Seed</span>
+                <span>SearXNG + Ollama</span>
               </div>
               <div :style="s.inputWrapper">
-                <textarea v-model="formData.simulationRequirement" :style="s.codeInput" placeholder="// Describe your simulation or prediction goal in natural language" rows="6" :disabled="loading"></textarea>
-                <div :style="s.modelBadge">Engine: Ollama + Neo4j (local)</div>
+                <textarea
+                  v-model="formData.simulationRequirement"
+                  :style="s.codeInput"
+                  name="simulation_requirement"
+                  aria-label="Simulation Requirement"
+                  autocomplete="off"
+                  placeholder="// Describe your simulation or prediction goal in natural language…"
+                  rows="10"
+                  :disabled="loading"
+                ></textarea>
+                <div :style="s.modelBadge">Seed: web research</div>
               </div>
             </div>
 
             <div :style="s.btnSection">
-              <button :style="s.startEngineBtn" @click="startSimulation" :disabled="!canSubmit || loading">
-                <span v-if="!loading">Start Engine</span>
-                <span v-else>Initializing...</span>
-                <span>→</span>
-              </button>
+	              <button :style="s.startEngineBtn" type="button" @click="startSimulation" :disabled="!canSubmit || loading">
+	                <span v-if="!loading">Start Engine</span>
+	                <span v-else aria-live="polite">Initializing…</span>
+	                <span aria-hidden="true">→</span>
+	              </button>
             </div>
           </div>
         </div>
@@ -147,6 +129,7 @@
 import { ref, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
+import { setPendingResearchSeed } from '../store/pendingResearchSeed'
 
 const mono = 'JetBrains Mono, monospace'
 const sans = 'Space Grotesk, Noto Sans SC, system-ui, sans-serif'
@@ -199,26 +182,15 @@ const s = reactive({
   consoleBox: { border: '1px solid #CCC', padding: '8px' },
   consoleSection: { padding: '20px' },
   consoleHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontFamily: mono, fontSize: '0.75rem', color: '#666' },
-  uploadZone: { border: '1px dashed #CCC', height: '200px', overflowY: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: '#FAFAFA' },
-  uploadPlaceholder: { textAlign: 'center' },
-  uploadIcon: { width: '40px', height: '40px', border: '1px solid #DDD', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 15px', color: '#999' },
-  uploadTitle: { fontWeight: '500', fontSize: '0.9rem', marginBottom: '5px' },
-  uploadHint: { fontFamily: mono, fontSize: '0.75rem', color: '#999' },
-  fileList: { width: '100%', padding: '15px', display: 'flex', flexDirection: 'column', gap: '10px' },
-  fileItem: { display: 'flex', alignItems: 'center', background: '#fff', padding: '8px 12px', border: '1px solid #EEE', fontFamily: mono, fontSize: '0.85rem' },
-  fileName: { flex: '1', margin: '0 10px' },
-  removeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#999' },
-  consoleDivider: { display: 'flex', alignItems: 'center', margin: '10px 0', borderTop: '1px solid #EEE' },
-  consoleDividerText: { padding: '0 15px', fontFamily: mono, fontSize: '0.7rem', color: '#BBB', letterSpacing: '1px' },
   inputWrapper: { position: 'relative', border: '1px solid #DDD', background: '#FAFAFA' },
-  codeInput: { width: '100%', border: 'none', background: 'transparent', padding: '20px', fontFamily: mono, fontSize: '0.9rem', lineHeight: '1.6', resize: 'vertical', outline: 'none', minHeight: '150px' },
+  codeInput: { width: '100%', border: 'none', background: 'transparent', padding: '20px', fontFamily: mono, fontSize: '0.9rem', lineHeight: '1.6', resize: 'vertical', minHeight: '150px' },
   modelBadge: { position: 'absolute', bottom: '10px', right: '15px', fontFamily: mono, fontSize: '0.7rem', color: '#AAA' },
   btnSection: { padding: '0 20px 20px' },
   startEngineBtn: { width: '100%', background: '#000', color: '#fff', border: 'none', padding: '20px', fontFamily: mono, fontWeight: '700', fontSize: '1.1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', letterSpacing: '1px' },
 })
 
 const steps = [
-  { num: '01', title: 'Graph Build', desc: 'Extract reality seeds from your document, build knowledge graph with Neo4j + GraphRAG' },
+  { num: '01', title: 'Graph Build', desc: 'Generate a web research seed, build knowledge graph with Neo4j + GraphRAG' },
   { num: '02', title: 'Env Setup', desc: 'Generate agent personas, configure simulation parameters via local Ollama LLM' },
   { num: '03', title: 'Simulation', desc: 'Run multi-agent simulation locally with dynamic memory updates and emergent behavior' },
   { num: '04', title: 'Report', desc: 'ReportAgent analyzes the simulation results and generates a detailed prediction report' },
@@ -228,38 +200,18 @@ const steps = [
 const router = useRouter()
 
 const formData = ref({ simulationRequirement: '' })
-const files = ref([])
 const loading = ref(false)
-const error = ref('')
-const isDragOver = ref(false)
-const fileInput = ref(null)
 
 const canSubmit = computed(() => {
-  return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
+  return formData.value.simulationRequirement.trim() !== ''
 })
-
-const triggerFileInput = () => { if (!loading.value) fileInput.value?.click() }
-const handleFileSelect = (event) => { addFiles(Array.from(event.target.files)) }
-const handleDragOver = (e) => { isDragOver.value = true }
-const handleDragLeave = (e) => { isDragOver.value = false }
-const handleDrop = (e) => { isDragOver.value = false; addFiles(Array.from(e.dataTransfer.files)) }
-
-const addFiles = (newFiles) => {
-  const allowed = ['.pdf', '.md', '.txt']
-  const valid = newFiles.filter(f => allowed.some(ext => f.name.toLowerCase().endsWith(ext)))
-  files.value = [...files.value, ...valid]
-}
-
-const removeFile = (index) => { files.value.splice(index, 1) }
 
 const scrollToBottom = () => { window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }) }
 
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
-  import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
-    setPendingUpload(files.value, formData.value.simulationRequirement)
-    router.push({ name: 'Process', params: { projectId: 'new' } })
-  })
+  setPendingResearchSeed(formData.value.simulationRequirement)
+  router.push({ name: 'Process', params: { projectId: 'new' } })
 }
 </script>
 

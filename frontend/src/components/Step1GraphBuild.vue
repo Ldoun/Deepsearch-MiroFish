@@ -18,13 +18,13 @@
         <div class="card-content">
           <p class="api-note">POST /api/graph/ontology/generate</p>
           <p class="description">
-            LLM analyzes document content and simulation requirements, extracts reality seeds, and automatically generates appropriate ontology structures
+            LLM analyzes the web research seed and simulation requirements, then automatically generates appropriate ontology structures
           </p>
 
           <!-- Loading / Progress -->
           <div v-if="currentPhase === 0 && ontologyProgress" class="progress-section">
             <div class="spinner-sm"></div>
-            <span>{{ ontologyProgress.message || 'Analyzing documents...' }}</span>
+            <span>{{ ontologyProgress.message || 'Analyzing web research seed...' }}</span>
           </div>
 
           <!-- Detail Overlay -->
@@ -122,7 +122,7 @@
         <div class="card-content">
           <p class="api-note">POST /api/graph/build</p>
           <p class="description">
-            Based on the generated ontology, automatically chunk documents and invoke Neo4j to build knowledge graphs, extract entities and relationships, and form temporal memory and community summaries
+            Based on the generated ontology, automatically chunk the web research seed and invoke Neo4j to build knowledge graphs, extract entities and relationships, and form temporal memory and community summaries
           </p>
           
           <!-- Stats Cards -->

@@ -58,7 +58,7 @@
         <div class="card-content">
           <p class="api-note">POST /api/simulation/prepare</p>
           <p class="description">
-            Combined with context，Automatically invoke tools to organize entities and relationships from knowledge graph，Initialize simulation individuals，and give them unique behaviors and memories based on reality seed
+            Combined with context，Automatically invoke tools to organize entities and relationships from the knowledge graph，initialize simulation individuals，and give them unique behaviors and memories based on the web research seed
           </p>
 
           <!-- Profiles Stats -->
@@ -73,7 +73,7 @@
             </div>
             <div class="stat-card">
               <span class="stat-value">{{ totalTopicsCount }}</span>
-              <span class="stat-label">Current Related Topics Count for Reality Seed</span>
+              <span class="stat-label">Current Related Topics Count for Web Research Seed</span>
             </div>
           </div>
 
@@ -130,7 +130,7 @@
         <div class="card-content">
           <p class="api-note">POST /api/simulation/prepare</p>
           <p class="description">
-            LLM Based on simulation requirements and reality seed，Intelligently set world time flow rate、Recommendation algorithm、Active time period for each individual、Speech frequency、Event trigger and other parameters
+            LLM Based on simulation requirements and the web research seed，intelligently set world time flow rate、Recommendation algorithm、Active time period for each individual、Speech frequency、Event trigger and other parameters
           </p>
           
           <!-- Config Preview -->
@@ -572,7 +572,7 @@
 
           <!-- Followed Topics -->
           <div class="modal-section" v-if="selectedProfile.interested_topics?.length">
-            <span class="section-label">Reality Seed Related Topics</span>
+            <span class="section-label">Web Research Seed Related Topics</span>
             <div class="topics-grid">
               <span 
                 v-for="topic in selectedProfile.interested_topics" 
@@ -598,7 +598,7 @@
               </div>
               <div class="dimension-card">
                 <span class="dim-title">Unique memory imprints</span>
-                <span class="dim-desc">Memory formed based on reality seed</span>
+                <span class="dim-desc">Memory formed from the web research seed</span>
               </div>
               <div class="dimension-card">
                 <span class="dim-title">Social Relationship Network</span>

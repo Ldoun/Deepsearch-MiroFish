@@ -13,6 +13,7 @@ from .web_research import (
     WebResearchError,
     WebResearchResult,
     WebResearchService,
+    evaluate_web_research_seed_gate,
 )
 from .entity_reader import EntityReader, EntityNode, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
@@ -57,6 +58,7 @@ __all__ = [
     'WebResearchError',
     'WebResearchResult',
     'WebResearchService',
+    'evaluate_web_research_seed_gate',
     'EntityReader',
     'EntityNode',
     'FilteredEntities',

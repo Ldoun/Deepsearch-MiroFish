@@ -18,6 +18,7 @@ from ..services.web_research import (
     WebResearchConfig,
     WebResearchError,
     WebResearchService,
+    evaluate_web_research_seed_gate,
 )
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
@@ -130,17 +131,16 @@ def reset_project(project_id: str):
     })
 
 
-# ============== Interface 1: Upload Files and Generate Ontology ==============
+# ============== Interface 1: Generate Web Research Seed and Ontology ==============
 
 @graph_bp.route('/ontology/generate', methods=['POST'])
 def generate_ontology():
     """
-    Interface 1: Upload files and analyze to generate ontology definition
+    Interface 1: Generate a web research seed and ontology definition
 
-    Request method: multipart/form-data
+    Request method: application/json
 
     Parameters:
-        files: Uploaded files (PDF/MD/TXT), multiple allowed
         simulation_requirement: Simulation requirement description (required)
         project_name: Project name (optional)
         additional_context: Additional notes (optional)
@@ -155,7 +155,7 @@ def generate_ontology():
                     "edge_types": [...],
                     "analysis_summary": "..."
                 },
-                "files": [...],
+                "files": [],
                 "total_text_length": 12345
             }
         }
@@ -163,10 +163,31 @@ def generate_ontology():
     try:
         logger.info("=== Starting ontology generation ===")
 
-        # Get parameters
-        simulation_requirement = request.form.get('simulation_requirement', '')
-        project_name = request.form.get('project_name', 'Unnamed Project')
-        additional_context = request.form.get('additional_context', '')
+        if request.mimetype == 'multipart/form-data' or request.files:
+            return jsonify({
+                "success": False,
+                "error": "File upload is no longer supported for project creation. Submit JSON with simulation_requirement.",
+                "failure_reason": "file_upload_not_supported",
+            }), 400
+
+        if not request.is_json:
+            return jsonify({
+                "success": False,
+                "error": "Project creation requires application/json with simulation_requirement",
+                "failure_reason": "invalid_request_content_type",
+            }), 400
+
+        payload = request.get_json(silent=True) or {}
+        if any(key in payload for key in ("file", "files", "upload", "uploads")):
+            return jsonify({
+                "success": False,
+                "error": "File upload is no longer supported for project creation. Submit only simulation_requirement and optional additional_context.",
+                "failure_reason": "file_upload_not_supported",
+            }), 400
+
+        simulation_requirement = str(payload.get('simulation_requirement') or '').strip()
+        project_name = str(payload.get('project_name') or 'Unnamed Project').strip() or 'Unnamed Project'
+        additional_context = str(payload.get('additional_context') or '').strip()
 
         logger.debug(f"Project name: {project_name}")
         logger.debug(f"Simulation requirement: {simulation_requirement[:100]}...")
@@ -174,83 +195,73 @@ def generate_ontology():
         if not simulation_requirement:
             return jsonify({
                 "success": False,
-                "error": "Please provide simulation requirement description (simulation_requirement)"
+                "error": "Please provide simulation_requirement",
+                "failure_reason": "missing_simulation_requirement",
             }), 400
 
-        # Get uploaded files
-        uploaded_files = request.files.getlist('files')
-        if not uploaded_files or all(not f.filename for f in uploaded_files):
+        research_config = WebResearchConfig.from_config(Config)
+        if not research_config.enabled:
             return jsonify({
                 "success": False,
-                "error": "Please upload at least one document file"
+                "error": "WEB_RESEARCH_ENABLED must be true for web research seed project creation",
+                "failure_reason": "web_research_disabled",
+            }), 400
+        try:
+            research_config.validate()
+        except WebResearchError as exc:
+            return jsonify({
+                "success": False,
+                "error": str(exc),
+                "failure_reason": "web_research_misconfigured",
             }), 400
 
         # Create project
         project = ProjectManager.create_project(name=project_name)
         project.simulation_requirement = simulation_requirement
+        project.web_research = {"enabled": True, "status": "running", "error": None}
         logger.info(f"Project created: {project.project_id}")
-        
-        # Save files and extract text
+
         document_texts = []
         all_text = ""
 
-        for file in uploaded_files:
-            if file and file.filename and allowed_file(file.filename):
-                # Save file to project directory
-                file_info = ProjectManager.save_file_to_project(
-                    project.project_id,
-                    file,
-                    file.filename
-                )
-                project.files.append({
-                    "filename": file_info["original_filename"],
-                    "size": file_info["size"]
-                })
-
-                # Extract text
-                text = FileParser.extract_text(file_info["path"])
-                text = TextProcessor.preprocess_text(text)
-                document_texts.append(text)
-                all_text += f"\n\n=== {file_info['original_filename']} ===\n{text}"
-
-        if not document_texts:
+        try:
+            research_service = WebResearchService(config=research_config)
+            research_result = research_service.run(
+                document_texts=[],
+                simulation_requirement=simulation_requirement,
+                additional_context=additional_context if additional_context else None,
+            )
+        except WebResearchError as exc:
             ProjectManager.delete_project(project.project_id)
             return jsonify({
                 "success": False,
-                "error": "No documents successfully processed. Please check file format"
-            }), 400
-
-        # Optional synchronous web research enrichment
-        project.web_research = WebResearchService.disabled_metadata()
-        research_config = WebResearchConfig.from_config(Config)
-        if research_config.enabled:
-            try:
-                research_service = WebResearchService(config=research_config)
-                research_result = research_service.run(
-                    document_texts=document_texts,
-                    simulation_requirement=simulation_requirement,
-                    additional_context=additional_context if additional_context else None,
-                )
-                ProjectManager.save_web_research(project.project_id, research_result.markdown)
-                research_section = f"{WEB_RESEARCH_SECTION_HEADER}\n{research_result.markdown}"
-                all_text += f"\n\n{research_section}"
-                document_texts.append(research_section)
-                project.web_research = research_result.metadata
-            except WebResearchError as exc:
-                ProjectManager.delete_project(project.project_id)
-                return jsonify({
-                    "success": False,
+                "error": str(exc),
+                "web_research": {
+                    "enabled": True,
+                    "status": "failed",
+                    "iterations": 0,
+                    "source_count": 0,
+                    "sources": [],
+                    "summary_path": None,
                     "error": str(exc),
-                    "web_research": {
-                        "enabled": True,
-                        "status": "failed",
-                        "iterations": 0,
-                        "source_count": 0,
-                        "sources": [],
-                        "summary_path": None,
-                        "error": str(exc),
-                    }
-                }), 502
+                }
+            }), 502
+
+        gate_result = evaluate_web_research_seed_gate(research_result.metadata)
+        if not gate_result["passed"]:
+            ProjectManager.delete_project(project.project_id)
+            return jsonify({
+                "success": False,
+                "error": "Web research seed did not satisfy the evidence gate",
+                "failure_reason": "evidence_gate_failed",
+                "web_research": gate_result,
+            }), 422
+
+        ProjectManager.save_web_research(project.project_id, research_result.markdown)
+        research_section = f"{WEB_RESEARCH_SECTION_HEADER}\n{research_result.markdown}"
+        all_text = research_section
+        document_texts = [research_section]
+        project.web_research = research_result.metadata
 
         # Save extracted text
         project.total_text_length = len(all_text)

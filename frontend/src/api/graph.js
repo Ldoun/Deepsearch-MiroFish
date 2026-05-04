@@ -1,19 +1,16 @@
 import service, { requestWithRetry } from './index'
 
 /**
- * Generate ontology (upload documents and simulation requirements)
- * @param {Object} data - Contains files, simulation_requirement, project_name, etc.
+ * Generate ontology from a web research seed and simulation requirement.
+ * @param {Object} data - Contains simulation_requirement, project_name, etc.
  * @returns {Promise}
  */
-export function generateOntology(formData) {
+export function generateOntology(data) {
   return requestWithRetry(() =>
     service({
       url: '/api/graph/ontology/generate',
       method: 'post',
-      data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+      data
     })
   )
 }

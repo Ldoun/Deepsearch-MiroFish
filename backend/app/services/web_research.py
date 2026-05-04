@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -22,6 +23,7 @@ WEB_RESEARCH_SECTION_HEADER = "=== Generated Web Research ==="
 REQUIRED_RESEARCH_SECTIONS = [
     "Source-Grounded Context",
     "Retrieved Source Summaries",
+    "Group Incident Signals",
     "Stakeholder and Viewpoint Coverage",
     "Scenario Assumptions Boundary",
     "Coverage Gaps",
@@ -34,6 +36,15 @@ SOURCE_SUMMARY_RENDER_LIMIT = 8
 SOURCE_CONTEXT_RENDER_LIMIT = 6
 FALLBACK_SUMMARY_MIN_SENTENCES = 4
 FALLBACK_SUMMARY_MAX_SENTENCES = 5
+WEB_RESEARCH_GATE_THRESHOLDS = {
+    "fetched_summary_count": 10,
+    "distinct_domain_count": 5,
+    "material_group_count": 4,
+    "influencing_group_count": 2,
+    "affected_group_count": 2,
+    "recent_incident_count": 4,
+    "scenario_related_incident_count": 4,
+}
 BOILERPLATE_CATEGORY_TERMS = {
     "automotive",
     "aviation",
@@ -61,6 +72,7 @@ BOILERPLATE_PHRASES = [
     "all rights reserved",
     "cookie policy",
     "privacy policy",
+    "skip to main content",
     "skip to content",
     "terms of use",
     "toggle navigation",
@@ -81,6 +93,7 @@ BOILERPLATE_PHRASES = [
     "our consulting",
     "brokerage and claims advocacy",
     "services services",
+    "welcome to the united nations language",
 ]
 SOURCE_CONTEXT_THEMES = [
     (
@@ -107,62 +120,6 @@ SOURCE_CONTEXT_THEMES = [
         {"diplomatic", "diplomacy", "navigation", "naval", "security", "de-escalation", "passage", "seafarer", "seafarers"},
         "Retrieved sources connect maritime security and diplomatic management with freedom-of-navigation concerns, escalation control, and seafarer protection.",
     ),
-]
-FIXTURE_SPECIFIC_QUERY_TERMS = [
-    "Caspian Star",
-    "Caspian Star Shipping",
-    "Caspian Star Shipping Horizon",
-    "Mina Cho",
-    "Tehran University Student Forum",
-    "Gulf Port Workers Union",
-    "Crescent Humanitarian Network",
-    "Gulf Energy Export Council",
-]
-SCENARIO_ACTOR_TERMS = [
-    "Iran Foreign Ministry",
-    "U.S.-led naval coalition",
-    "Gulf Energy Export Council",
-    "UN Security Council",
-    "Caspian Star Shipping",
-    "Caspian Star Shipping Horizon",
-    "Mina Cho",
-    "Tehran University Student Forum",
-    "Gulf Port Workers Union",
-    "Crescent Humanitarian Network",
-]
-SCENARIO_BOUNDARY_MARKERS = SCENARIO_ACTOR_TERMS + [
-    "fictional",
-    "synthetic",
-    "smoke test",
-    "user-provided",
-]
-OUT_OF_SCOPE_GAP_MARKERS = [
-    "operational military",
-    "tactical",
-    "strategic aspects",
-    "military and strategic",
-    "military operation",
-    "military operations",
-    "military action",
-    "military response",
-    "long-term diplomatic",
-    "long-term diplomacy",
-    "long-term consequence",
-    "long-term economic",
-    "detailed economic impact",
-    "detailed economic impact analysis",
-    "broader economic impact",
-    "potential broader economic impact",
-    "more detailed",
-    "specific details",
-    "specific labor concerns",
-    "exact actions",
-    "technical details",
-    "hull breach",
-    "tanker condition",
-    "tanker's condition",
-    "specific countries",
-    "specific actions and statements",
 ]
 QUESTION_QUERY_PREFIXES = (
     "what ",
@@ -194,37 +151,6 @@ LOW_VALUE_SOURCE_HOSTS = {
     "tiktok.com",
     "www.tiktok.com",
 }
-SCENARIO_BOUNDARY_TERMS = [
-    "Iran Foreign Ministry",
-    "U.S.-led naval coalition",
-    "Gulf Energy Export Council",
-    "UN Security Council",
-    "Caspian Star Shipping",
-    "Mina Cho",
-    "Tehran University Student Forum",
-    "Gulf Port Workers Union",
-    "Crescent Humanitarian Network",
-    "denies",
-    "accuses",
-    "patrols",
-    "operates",
-    "reports_on",
-    "calls_for_deescalation",
-    "affected_by",
-    "warns_about",
-    "supports",
-    "opposes",
-    "escalation fears",
-    "nationalism",
-    "energy-market anxiety",
-    "shipping delays",
-    "misinformation",
-    "diplomacy",
-    "humanitarian concern",
-    "public protest",
-]
-
-
 class WebResearchError(Exception):
     """Raised when web research cannot complete safely."""
 
@@ -528,6 +454,11 @@ class WebResearchService:
         sources: List[Dict[str, Any]] = []
         summary_markdown = ""
         coverage = {"covered": [], "gaps": []}
+        group_coverage = {
+            "influencing_groups": [],
+            "affected_groups": [],
+            "incidents": [],
+        }
         fetched_count = 0
         completed_iterations = 0
 
@@ -570,10 +501,28 @@ class WebResearchService:
                     simulation_requirement=simulation_requirement,
                 )
                 coverage = _merge_coverage(coverage, summary_update.get("coverage"))
+                group_coverage = _merge_group_coverage(
+                    group_coverage,
+                    summary_update.get("group_coverage"),
+                )
 
             completed_iterations = iteration
 
             if not batch_sources and fetched_count == 0 and iteration >= self.config.max_loops:
+                break
+
+            gate_metadata, gate_coverage, gate_group_coverage = _seed_gate_metadata(
+                sources=sources,
+                coverage=coverage,
+                group_coverage=group_coverage,
+                summary_markdown=summary_markdown,
+                query_history=query_history,
+                simulation_requirement=simulation_requirement,
+            )
+            gate_result = evaluate_web_research_seed_gate(gate_metadata)
+            if iteration >= self.config.min_loops and gate_result["passed"]:
+                coverage = gate_coverage
+                group_coverage = gate_group_coverage
                 break
 
             reflection = self._reflect(
@@ -581,23 +530,34 @@ class WebResearchService:
                 simulation_requirement=simulation_requirement,
                 summary_markdown=summary_markdown,
                 coverage=coverage,
+                gate_result=gate_result,
                 iteration=iteration,
             )
             coverage = _merge_coverage(coverage, _coverage_from_response(reflection))
 
-            sufficient = bool(reflection.get("sufficient"))
             follow_up_queries = self._filter_research_queries(
                 _queries_from_response(reflection, ["follow_up_queries", "follow_up_query"])
             )
-            if iteration >= self.config.min_loops and sufficient and fetched_count > 0:
-                break
             pending_queries = follow_up_queries
 
         if fetched_count == 0:
             raise WebResearchError("No usable web research sources were fetched")
 
-        coverage = _filter_contextually_covered_gaps(coverage, summary_markdown, sources, query_history)
-        markdown = self._finalize_markdown(summary_markdown, sources, document_texts, coverage)
+        _gate_metadata, coverage, group_coverage = _seed_gate_metadata(
+            sources=sources,
+            coverage=coverage,
+            group_coverage=group_coverage,
+            summary_markdown=summary_markdown,
+            query_history=query_history,
+            simulation_requirement=simulation_requirement,
+        )
+        markdown = self._finalize_markdown(
+            summary_markdown,
+            sources,
+            document_texts,
+            coverage,
+            group_coverage,
+        )
         metadata = {
             "enabled": True,
             "status": "completed",
@@ -605,6 +565,7 @@ class WebResearchService:
             "source_count": fetched_count,
             "queries": query_history,
             "coverage": coverage,
+            "group_coverage": group_coverage,
             "sources": sources,
             "summary_path": "web_research.md",
             "error": None,
@@ -623,10 +584,11 @@ class WebResearchService:
                     "role": "system",
                     "content": (
                         "Generate three to five concise web search queries for source-grounded "
-                        "scenario enrichment. Search for real-world analogue context, not fictional "
-                        "fixture names. Cover shipping/security context, energy or insurance risk, "
+                        "scenario enrichment. Cover shipping/security context, energy or insurance risk, "
                         "stakeholder/public reaction, misinformation, and humanitarian or diplomatic "
-                        "concerns when relevant. Return JSON with key queries."
+                        "concerns when relevant. Also search for recent incidents involving material "
+                        "groups and direct or indirect scenario-related incidents that may perturb "
+                        "the simulation. Return JSON with key queries."
                     ),
                 },
                 {
@@ -655,10 +617,6 @@ class WebResearchService:
         filtered = []
         for query in queries:
             lowered_query = query.lower().strip()
-            if any(term.lower() in lowered_query for term in FIXTURE_SPECIFIC_QUERY_TERMS):
-                continue
-            if any(term in lowered_query for term in OUT_OF_SCOPE_GAP_MARKERS):
-                continue
             if _is_question_like_query(lowered_query):
                 continue
             filtered.append(query)
@@ -742,13 +700,21 @@ class WebResearchService:
                         "and a 2-4 sentence content_summary derived from the fetched Text field rather "
                         "than the search snippet or title. Each source summary should capture the main "
                         "evidence, scenario relevance, and stakeholder or risk implications when present. "
+                        "Identify material groups in group_coverage.influencing_groups and "
+                        "group_coverage.affected_groups as arrays of group-name strings only. Put all "
+                        "incident objects only in group_coverage.incidents. Each incident object must "
+                        "include group, role, incident_class recent or scenario_related, summary, "
+                        "simulation_relevance, and source_ids using the fetched R ids. Omit any "
+                        "incident that cannot cite at least one R id. Recent incidents happened within "
+                        "the last 12 months. Scenario-related incidents may be directly or indirectly "
+                        "related, but must explain why they matter to the simulation. "
                         "Ignore navigation menus, category lists, cookie banners, and generic site boilerplate. "
-                        "Do not present fictional or user-provided scenario actors as externally "
-                        "verified. Use ## Source-Grounded Context for cross-source synthesis rather "
-                        "than repeating one source summary at a time. Use sections: ## Source-Grounded "
-                        "Context, ## Stakeholder and Viewpoint Coverage, ## Scenario Assumptions Boundary, and ## Coverage Gaps. "
-                        "Return JSON with summary_markdown, source_summaries, and coverage "
-                        "{covered: [], gaps: []}."
+                        "Use ## Source-Grounded Context for cross-source synthesis rather than "
+                        "repeating one source summary at a time. Use sections: ## Source-Grounded "
+                        "Context, ## Group Incident Signals, ## Stakeholder and Viewpoint Coverage, "
+                        "## Scenario Assumptions Boundary, and ## Coverage Gaps. Return JSON with "
+                        "summary_markdown, source_summaries, coverage {covered: [], gaps: []}, and "
+                        "group_coverage."
                     ),
                 },
                 {
@@ -776,6 +742,7 @@ class WebResearchService:
             "summary_markdown": summary,
             "source_summaries": _source_summaries_from_response(response),
             "coverage": _coverage_from_response(response),
+            "group_coverage": _group_coverage_from_response(response),
         }
 
     def _apply_content_summaries(
@@ -801,7 +768,7 @@ class WebResearchService:
             content_summary = _clean_optional(llm_summaries.get(source_id))
             if content_summary:
                 cleaned_summary = _clean_optional(_remove_boilerplate_sentences(content_summary))
-                if cleaned_summary:
+                if cleaned_summary and _has_useful_source_summary(cleaned_summary):
                     record["content_summary"] = _cap_text(
                         cleaned_summary,
                         max_chars=SOURCE_CONTENT_SUMMARY_MAX_CHARS,
@@ -821,6 +788,7 @@ class WebResearchService:
         simulation_requirement: str,
         summary_markdown: str,
         coverage: Dict[str, List[str]],
+        gate_result: Dict[str, Any],
         iteration: int,
     ) -> Dict[str, Any]:
         response = self._chat_json(
@@ -828,14 +796,20 @@ class WebResearchService:
                 {
                     "role": "system",
                     "content": (
-                        "Decide whether the research summary is sufficient for scenario enrichment. "
-                        "Evaluate coverage of source-grounded context, stakeholder viewpoints, "
-                        "misinformation/public reaction, humanitarian concerns, and scenario-boundary "
-                        "clarity. Do not request operational military or tactical details; public "
-                        "security posture and escalation-management context are enough. Do not treat "
-                        "fixture-specific actor details as research gaps. Return JSON with sufficient "
-                        "boolean, follow_up_queries list of web-search keyword phrases rather than "
-                        "questions, and coverage {covered: [], gaps: []}."
+                        "Identify the next knowledge gap and follow-up web-search queries. "
+                        "Deterministic code decides whether research is enough; do not decide or return "
+                        "sufficient. Use the deterministic gate snapshot to target missing evidence. "
+                        "Prioritize unmet thresholds: fetched summarized sources >= 10, distinct "
+                        "domains >= 5, material groups >= 4, influencing groups >= 2, affected groups "
+                        ">= 2, recent group incidents >= 4, scenario-related group incidents >= 4, "
+                        "no material group missing recent or scenario-related incidents, and no "
+                        "remaining material coverage gaps. Evaluate source-grounded context, "
+                        "stakeholder viewpoints, misinformation/public reaction, humanitarian "
+                        "concerns, scenario-boundary clarity, and recent plus direct or indirect "
+                        "scenario-related incidents for material influencing and affected groups. "
+                        "Return JSON with knowledge_gap string, follow_up_queries list of "
+                        "web-search keyword phrases rather than questions, and coverage "
+                        "{covered: [], gaps: []}."
                     ),
                 },
                 {
@@ -845,6 +819,8 @@ class WebResearchService:
                         f"Simulation requirement:\n{simulation_requirement}\n\n"
                         f"Scenario excerpt:\n{_join_excerpt(document_texts)}\n\n"
                         f"Current coverage:\n{coverage}\n\n"
+                        "Deterministic gate snapshot:\n"
+                        f"{json.dumps(gate_result, ensure_ascii=False, sort_keys=True)}\n\n"
                         f"Current summary:\n{summary_markdown}"
                     ),
                 },
@@ -852,7 +828,7 @@ class WebResearchService:
             temperature=0.2,
             max_tokens=1024,
         )
-        return response if isinstance(response, dict) else {"sufficient": False, "follow_up_query": None}
+        return response if isinstance(response, dict) else {"knowledge_gap": "", "follow_up_queries": []}
 
     def _fallback_queries(
         self,
@@ -902,6 +878,7 @@ class WebResearchService:
         sources: List[Dict[str, Any]],
         document_texts: List[str],
         coverage: Dict[str, List[str]],
+        group_coverage: Dict[str, Any],
     ) -> str:
         if not summary_markdown.strip():
             summary_markdown = "## Source Claims\n- Web research completed with the sources below."
@@ -909,14 +886,14 @@ class WebResearchService:
         summary_markdown = _drop_preamble_before_first_heading(summary_markdown)
         summary_markdown = _remove_any_level_section(summary_markdown, "Retrieved Source Summaries")
         summary_markdown = _remove_any_level_section(summary_markdown, "Retrieved Source Notes")
+        summary_markdown = _remove_any_level_section(summary_markdown, "Group Incident Signals")
         if not _has_heading(summary_markdown, "Source-Grounded Context"):
             summary_markdown = f"## Source-Grounded Context\n{summary_markdown}"
         if not _has_heading(summary_markdown, "Stakeholder and Viewpoint Coverage"):
             summary_markdown += (
                 "\n\n## Stakeholder and Viewpoint Coverage\n"
-                "- Use the cited context above to enrich stakeholder viewpoints; keep uncited fixture actors as scenario inputs."
+                "- Use the cited context above to enrich stakeholder viewpoints."
             )
-        summary_markdown, relocated_claims = _relocate_scenario_boundary_claims(summary_markdown)
         summary_markdown = _ensure_source_context_citations(summary_markdown, sources)
         source_summary_lines = _source_summary_lines(sources)
         if source_summary_lines:
@@ -925,29 +902,17 @@ class WebResearchService:
                 "Source-Grounded Context",
                 "\n\n## Retrieved Source Summaries\n" + "\n".join(source_summary_lines),
             )
-        assumptions = _extract_scenario_assumptions(document_texts)
+        summary_markdown = _append_to_section(
+            summary_markdown,
+            "Retrieved Source Summaries" if source_summary_lines else "Source-Grounded Context",
+            "\n\n## Group Incident Signals\n"
+            + "\n".join(_group_incident_lines(group_coverage)),
+        )
         if not _has_heading(summary_markdown, "Scenario Assumptions Boundary"):
-            assumption_line = "- User-provided scenario inputs remain separate from source-cited claims above."
-            if assumptions:
-                assumption_line += f" Treat these as scenario inputs unless independently cited: {', '.join(assumptions)}."
-            summary_markdown += f"\n\n## Scenario Assumptions Boundary\n{assumption_line}"
-        if relocated_claims:
-            summary_markdown = _append_to_section(
-                summary_markdown,
-                "Scenario Assumptions Boundary",
-                "\n- Scenario-specific details relocated from source-grounded prose because they come from the user fixture, not fetched sources: "
-                + " ".join(relocated_claims[:6]),
+            summary_markdown += (
+                "\n\n## Scenario Assumptions Boundary\n"
+                "- Source-grounded claims above should be interpreted as research context for the requested scenario."
             )
-        if assumptions:
-            missing = [term for term in assumptions if term not in summary_markdown]
-            if missing:
-                summary_markdown = _append_to_section(
-                    summary_markdown,
-                    "Scenario Assumptions Boundary",
-                    "\n- Additional user-provided scenario inputs to keep separate unless independently cited: "
-                    + ", ".join(missing)
-                    + ".",
-                )
         summary_markdown = _remove_section(summary_markdown, "Coverage Gaps")
         gap_lines = coverage.get("gaps") or []
         if gap_lines:
@@ -1041,7 +1006,7 @@ def _coverage_from_response(response: Any) -> Dict[str, List[str]]:
     )
     return {
         "covered": sorted(_dedupe_strings(_as_list(covered))),
-        "gaps": _filter_coverage_gaps(_dedupe_strings(_as_list(gaps))),
+        "gaps": sorted(_dedupe_strings(_as_list(gaps))),
     }
 
 
@@ -1081,6 +1046,544 @@ def _source_summaries_from_response(response: Any) -> Dict[str, str]:
         if source_id and summary:
             summaries[_normalize_source_id(source_id)] = summary
     return summaries
+
+
+def _group_coverage_from_response(response: Any) -> Dict[str, Any]:
+    if not isinstance(response, dict):
+        return {"influencing_groups": [], "affected_groups": [], "incidents": []}
+
+    raw = response.get("group_coverage")
+    if not isinstance(raw, dict):
+        raw = response
+
+    influencing_groups, influencing_incidents = _group_entries_from_response(
+        raw.get("influencing_groups", raw.get("influencing", [])),
+        fallback_role="influencing",
+    )
+    affected_groups, affected_incidents = _group_entries_from_response(
+        raw.get("affected_groups", raw.get("affected", [])),
+        fallback_role="affected",
+    )
+
+    return {
+        "influencing_groups": _dedupe_strings(influencing_groups),
+        "affected_groups": _dedupe_strings(affected_groups),
+        "incidents": _normalize_group_incidents(
+            _as_list(raw.get("incidents", raw.get("group_incidents", [])))
+            + influencing_incidents
+            + affected_incidents
+        ),
+    }
+
+
+def _group_entries_from_response(value: Any, *, fallback_role: str) -> tuple[List[str], List[Dict[str, Any]]]:
+    groups: List[str] = []
+    incidents: List[Dict[str, Any]] = []
+    for item in _as_list(value):
+        if isinstance(item, dict):
+            group = _clean_optional(
+                item.get("group")
+                or item.get("group_name")
+                or item.get("name")
+                or item.get("label")
+            )
+            if group:
+                groups.append(group)
+            if item.get("incident_class") or item.get("summary") or item.get("incident_summary"):
+                incident = dict(item)
+                incident.setdefault("role", item.get("role") or fallback_role)
+                incidents.append(incident)
+            continue
+        cleaned = _clean_optional(item)
+        if cleaned:
+            groups.append(cleaned)
+    return groups, incidents
+
+
+def _normalize_group_incidents(value: Any) -> List[Dict[str, Any]]:
+    incidents = []
+    for item in _as_list(value):
+        if not isinstance(item, dict):
+            continue
+        group = _clean_optional(item.get("group") or item.get("group_name"))
+        incident_class = _normalize_incident_class(
+            item.get("incident_class") or item.get("type") or item.get("class")
+        )
+        summary = _clean_optional(item.get("summary") or item.get("incident_summary"))
+        if not group or not incident_class or not summary:
+            continue
+        incidents.append(
+            {
+                "group": group,
+                "role": _clean_optional(item.get("role") or item.get("group_role")) or "unknown",
+                "incident_class": incident_class,
+                "summary": summary,
+                "simulation_relevance": _clean_optional(
+                    item.get("simulation_relevance")
+                    or item.get("relevance")
+                    or item.get("why_it_matters")
+                )
+                or "",
+                "source_ids": _source_ids_from_incident(item),
+            }
+        )
+    return incidents
+
+
+def _normalize_incident_class(value: Any) -> Optional[str]:
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        return None
+    normalized = cleaned.lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"recent", "recent_group", "recent_group_incident"}:
+        return "recent"
+    if normalized in {
+        "scenario",
+        "scenario_related",
+        "scenario_related_group",
+        "scenario_related_group_incident",
+        "related",
+    }:
+        return "scenario_related"
+    return normalized
+
+
+def _source_ids_from_incident(item: Dict[str, Any]) -> List[str]:
+    values = []
+    for key in ("source_ids", "sources", "citations"):
+        for value in _as_list(item.get(key)):
+            if isinstance(value, dict):
+                values.extend(
+                    _as_list(
+                        value.get("id")
+                        or value.get("source_id")
+                        or value.get("citation")
+                        or value.get("ref")
+                    )
+                )
+            else:
+                values.append(value)
+    summary = str(item.get("summary") or item.get("incident_summary") or "")
+    values.extend(re.findall(r"\[(R\d+)\]", summary))
+    return _dedupe_strings(_normalize_source_id(str(value)) for value in values)
+
+
+GROUP_SOURCE_PATTERNS = [
+    {
+        "name": "Regional officials",
+        "role": "influencing",
+        "keywords": {
+            "official",
+            "officials",
+            "government",
+            "authority",
+            "authorities",
+            "task",
+            "force",
+            "naval",
+            "security",
+            "iran",
+            "u.s.",
+            "un",
+            "imo",
+            "oman",
+        },
+        "relevance": "Policy and security coordination can amplify or dampen escalation signals.",
+    },
+    {
+        "name": "Energy traders",
+        "role": "influencing",
+        "keywords": {
+            "energy",
+            "oil",
+            "market",
+            "markets",
+            "price",
+            "prices",
+            "trader",
+            "traders",
+            "insurance",
+            "premium",
+            "premiums",
+            "fuel",
+        },
+        "relevance": "Price discovery and risk repricing can shape public anxiety and institutional response.",
+    },
+    {
+        "name": "Shipping workers",
+        "role": "affected",
+        "keywords": {
+            "shipping",
+            "ship",
+            "ships",
+            "seafarer",
+            "seafarers",
+            "mariner",
+            "mariners",
+            "crew",
+            "vessel",
+            "vessels",
+            "tanker",
+            "port",
+            "labor",
+            "worker",
+            "workers",
+        },
+        "relevance": "Crew safety, route changes, and port pressure can change worker behavior and risk perception.",
+    },
+    {
+        "name": "Humanitarian groups",
+        "role": "affected",
+        "keywords": {
+            "humanitarian",
+            "aid",
+            "relief",
+            "wfp",
+            "irc",
+            "rescue",
+            "corridor",
+            "food",
+            "supply",
+            "supplies",
+        },
+        "relevance": "Aid delays and access constraints can alter public concern and institutional priorities.",
+    },
+]
+
+
+def _supplement_group_coverage_from_sources(
+    group_coverage: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+    simulation_requirement: str,
+) -> Dict[str, Any]:
+    normalized = _group_coverage_from_response(group_coverage)
+    fetched_sources = [
+        source
+        for source in sources
+        if source.get("fetched") is True
+        and _has_useful_source_summary(source.get("content_summary"))
+    ]
+    incidents = [
+        _attach_incident_sources(incident, fetched_sources)
+        for incident in _normalize_group_incidents(normalized.get("incidents", []))
+    ]
+    merged = {
+        "influencing_groups": list(normalized.get("influencing_groups", [])),
+        "affected_groups": list(normalized.get("affected_groups", [])),
+        "incidents": incidents,
+    }
+    candidates = _material_group_candidates(normalized, simulation_requirement, fetched_sources)
+    for candidate in candidates:
+        matched_sources = _sources_for_group_candidate(candidate, fetched_sources)
+        if not matched_sources:
+            continue
+        for incident_class, source in (
+            ("recent", matched_sources[0]),
+            ("scenario_related", matched_sources[1] if len(matched_sources) > 1 else matched_sources[0]),
+        ):
+            if _has_group_incident(merged["incidents"], candidate["name"], incident_class):
+                continue
+            merged["incidents"].append(
+                _source_based_group_incident(candidate, incident_class, source)
+            )
+        role_key = (
+            "influencing_groups"
+            if candidate["role"] == "influencing"
+            else "affected_groups"
+        )
+        merged[role_key] = _dedupe_strings(merged.get(role_key, []) + [candidate["name"]])
+    return _retain_supported_material_groups(merged)
+
+
+def _attach_incident_sources(
+    incident: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if incident.get("source_ids"):
+        return incident
+    matched = _rank_sources_for_text(
+        " ".join(
+            [
+                str(incident.get("group") or ""),
+                str(incident.get("summary") or ""),
+                str(incident.get("simulation_relevance") or ""),
+            ]
+        ),
+        sources,
+    )
+    if not matched:
+        return incident
+    updated = dict(incident)
+    updated["source_ids"] = [matched[0]["id"]]
+    return updated
+
+
+def _material_group_candidates(
+    group_coverage: Dict[str, Any],
+    simulation_requirement: str,
+    sources: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    context = " ".join(
+        [simulation_requirement]
+        + [
+            str(source.get("title") or "") + " " + str(source.get("content_summary") or "")
+            for source in sources
+        ]
+    ).lower()
+    requested_groups = {
+        group.lower()
+        for group in (
+            group_coverage.get("influencing_groups", [])
+            + group_coverage.get("affected_groups", [])
+        )
+    }
+    candidates = []
+    for pattern in GROUP_SOURCE_PATTERNS:
+        name = pattern["name"]
+        name_key = name.lower()
+        has_group = any(
+            name_key in group or group in name_key for group in requested_groups
+        )
+        has_context = bool(set(pattern["keywords"]) & _summary_keywords(context))
+        if has_group or has_context:
+            candidates.append(pattern)
+    return candidates
+
+
+def _sources_for_group_candidate(
+    candidate: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    ranked = _rank_sources_for_text(
+        " ".join(sorted(candidate["keywords"])),
+        sources,
+        min_score=2,
+    )
+    return ranked[:2]
+
+
+def _rank_sources_for_text(
+    text: str,
+    sources: List[Dict[str, Any]],
+    *,
+    min_score: int = 1,
+) -> List[Dict[str, Any]]:
+    keywords = _summary_keywords(text)
+    scored = []
+    for source in sources:
+        source_text = " ".join(
+            [
+                str(source.get("title") or ""),
+                str(source.get("snippet") or ""),
+                str(source.get("query") or ""),
+                str(source.get("content_summary") or ""),
+            ]
+        )
+        score = len(keywords & _summary_keywords(source_text))
+        if score >= min_score:
+            scored.append((score, source))
+    scored.sort(key=lambda item: (-item[0], str(item[1].get("id") or "")))
+    return [source for _score, source in scored]
+
+
+def _source_based_group_incident(
+    candidate: Dict[str, Any],
+    incident_class: str,
+    source: Dict[str, Any],
+) -> Dict[str, Any]:
+    summary = _cap_text(
+        _clean_optional(source.get("content_summary")) or _clean_optional(source.get("title")) or "",
+        max_chars=260,
+    )
+    prefix = (
+        "Recent source-backed signal"
+        if incident_class == "recent"
+        else "Scenario-related source-backed signal"
+    )
+    return {
+        "group": candidate["name"],
+        "role": candidate["role"],
+        "incident_class": incident_class,
+        "summary": f"{prefix}: {summary}",
+        "simulation_relevance": candidate["relevance"],
+        "source_ids": [_normalize_source_id(str(source.get("id") or ""))],
+    }
+
+
+def _has_group_incident(
+    incidents: List[Dict[str, Any]],
+    group: str,
+    incident_class: str,
+) -> bool:
+    group_key = group.lower()
+    for incident in incidents:
+        if str(incident.get("group") or "").lower() != group_key:
+            continue
+        if incident.get("incident_class") != incident_class:
+            continue
+        if _incident_has_source(incident):
+            return True
+    return False
+
+
+def _retain_supported_material_groups(group_coverage: Dict[str, Any]) -> Dict[str, Any]:
+    incidents = [
+        incident
+        for incident in _normalize_group_incidents(group_coverage.get("incidents", []))
+        if _incident_has_source(incident)
+    ]
+    groups_with_recent = {
+        incident["group"].lower()
+        for incident in incidents
+        if incident["incident_class"] == "recent"
+    }
+    groups_with_scenario = {
+        incident["group"].lower()
+        for incident in incidents
+        if incident["incident_class"] == "scenario_related"
+    }
+    supported = groups_with_recent & groups_with_scenario
+    influencing = [
+        group
+        for group in _dedupe_strings(group_coverage.get("influencing_groups", []))
+        if group.lower() in supported
+    ]
+    affected = [
+        group
+        for group in _dedupe_strings(group_coverage.get("affected_groups", []))
+        if group.lower() in supported
+    ]
+    return {
+        "influencing_groups": influencing,
+        "affected_groups": affected,
+        "incidents": incidents,
+    }
+
+
+GROUP_GAP_ALIASES = {
+    "Regional officials": {
+        "regional official",
+        "regional officials",
+        "official reaction",
+        "official reactions",
+        "communication strategies",
+    },
+    "Energy traders": {
+        "energy trader",
+        "energy traders",
+        "market reaction",
+        "market reactions",
+        "energy market",
+        "long-term impacts",
+    },
+    "Shipping workers": {
+        "shipping worker",
+        "shipping workers",
+        "seafarer",
+        "seafarers",
+        "seafarer safety",
+    },
+    "Humanitarian groups": {
+        "humanitarian group",
+        "humanitarian groups",
+        "humanitarian operations",
+        "conflict zones",
+    },
+    "Journalists": {
+        "journalist",
+        "journalists",
+        "reporting trends",
+        "key stories",
+    },
+    "Online publics": {
+        "online public",
+        "online publics",
+        "public sentiment",
+        "social media",
+    },
+    "Students": {
+        "student",
+        "students",
+        "awareness",
+    },
+}
+
+
+def _filter_group_incident_coverage_gaps(
+    coverage: Dict[str, List[str]],
+    group_coverage: Dict[str, Any],
+) -> Dict[str, List[str]]:
+    influencing_groups = _dedupe_strings(group_coverage.get("influencing_groups", []))
+    affected_groups = _dedupe_strings(group_coverage.get("affected_groups", []))
+    material_groups = _dedupe_strings(influencing_groups + affected_groups)
+    material_keys = {group.lower() for group in material_groups}
+    incidents = [
+        incident
+        for incident in _normalize_group_incidents(group_coverage.get("incidents", []))
+        if _incident_has_source(incident)
+    ]
+    incident_classes_by_group: Dict[str, set[str]] = {}
+    for incident in incidents:
+        incident_classes_by_group.setdefault(incident["group"].lower(), set()).add(
+            incident["incident_class"]
+        )
+
+    filtered_gaps = []
+    for gap in coverage.get("gaps", []):
+        matched_groups = _groups_mentioned_by_gap(gap)
+        if matched_groups:
+            matched_material = [
+                group for group in matched_groups if group.lower() in material_keys
+            ]
+            if not matched_material:
+                continue
+            if all(
+                {"recent", "scenario_related"}
+                <= incident_classes_by_group.get(group.lower(), set())
+                for group in matched_material
+            ):
+                continue
+        filtered_gaps.append(gap)
+    return {
+        "covered": sorted(_dedupe_strings(coverage.get("covered", []))),
+        "gaps": sorted(_dedupe_strings(filtered_gaps)),
+    }
+
+
+def _groups_mentioned_by_gap(gap: str) -> List[str]:
+    lowered = gap.lower()
+    matches = []
+    for group, aliases in GROUP_GAP_ALIASES.items():
+        if group.lower() in lowered or any(alias in lowered for alias in aliases):
+            matches.append(group)
+    return matches
+
+
+def _merge_group_coverage(current: Dict[str, Any], update: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    update = update or {}
+    merged = {
+        "influencing_groups": _dedupe_strings(
+            current.get("influencing_groups", []) + update.get("influencing_groups", [])
+        ),
+        "affected_groups": _dedupe_strings(
+            current.get("affected_groups", []) + update.get("affected_groups", [])
+        ),
+        "incidents": [],
+    }
+    seen_incidents = set()
+    for incident in current.get("incidents", []) + update.get("incidents", []):
+        if not isinstance(incident, dict):
+            continue
+        key = (
+            str(incident.get("group") or "").lower(),
+            str(incident.get("incident_class") or "").lower(),
+            str(incident.get("summary") or "").lower(),
+        )
+        if key in seen_incidents:
+            continue
+        seen_incidents.add(key)
+        merged["incidents"].append(incident)
+    return merged
 
 
 def _merge_coverage(
@@ -1221,7 +1724,7 @@ def _source_grounded_context_lines(sources: List[Dict[str, Any]]) -> List[str]:
     fetched_sources = [
         source
         for source in sources
-        if source.get("fetched") and _clean_optional(source.get("content_summary"))
+        if source.get("fetched") and _has_useful_source_summary(source.get("content_summary"))
     ]
     lines = []
     for keywords, template in SOURCE_CONTEXT_THEMES:
@@ -1244,7 +1747,7 @@ def _source_grounded_context_lines(sources: List[Dict[str, Any]]) -> List[str]:
         if not source.get("fetched"):
             continue
         detail = _clean_optional(source.get("content_summary"))
-        if not detail:
+        if not detail or not _has_useful_source_summary(detail):
             continue
         lines.append(
             "- Retrieved sources add scenario-relevant context from fetched material about "
@@ -1265,13 +1768,39 @@ def _source_summary_lines(sources: List[Dict[str, Any]]) -> List[str]:
         if not source.get("fetched"):
             continue
         detail = _clean_optional(source.get("content_summary"))
-        if not detail:
-            detail = "Fetched source did not contain enough relevant text to summarize."
+        if not detail or not _has_useful_source_summary(detail):
+            continue
         detail = _cap_text(detail, max_chars=SOURCE_CONTENT_SUMMARY_MAX_CHARS)
         lines.append(f"- [{source['id']}] {detail}")
         if len(lines) >= SOURCE_SUMMARY_RENDER_LIMIT:
             break
     return lines
+
+
+def _group_incident_lines(group_coverage: Dict[str, Any]) -> List[str]:
+    incidents = _normalize_group_incidents(group_coverage.get("incidents", []))
+    if not incidents:
+        return ["- No source-backed group incident signals were extracted."]
+
+    lines = []
+    for incident in incidents:
+        relevance = _clean_optional(incident.get("simulation_relevance"))
+        relevance_text = f" Simulation relevance: {relevance}" if relevance else ""
+        lines.append(
+            "- "
+            f"{incident['group']} | {incident['role']} | {incident['incident_class']} | "
+            f"{incident['summary']}{_format_incident_citations(incident)}.{relevance_text}"
+        )
+    return lines
+
+
+def _format_incident_citations(incident: Dict[str, Any]) -> str:
+    if re.search(r"\[R\d+\]", str(incident.get("summary") or "")):
+        return ""
+    source_ids = _dedupe_strings(incident.get("source_ids", []))
+    if not source_ids:
+        return ""
+    return " " + " ".join(f"[{source_id}]" for source_id in source_ids)
 
 
 def _fallback_content_summary(
@@ -1389,6 +1918,13 @@ def _summary_keywords(text: str) -> set[str]:
     }
 
 
+def _has_useful_source_summary(value: Any) -> bool:
+    summary = _clean_optional(value)
+    if not summary:
+        return False
+    return len(_summary_keywords(summary)) >= 3
+
+
 def _cap_text(text: str, *, max_chars: int) -> str:
     cleaned = re.sub(r"\s+", " ", text).strip()
     if len(cleaned) <= max_chars:
@@ -1400,126 +1936,147 @@ def _cap_text(text: str, *, max_chars: int) -> str:
     return clipped.rstrip(".;, ") + "..."
 
 
-def _filter_coverage_gaps(gaps: List[str]) -> List[str]:
-    filtered = []
-    for gap in gaps:
-        lowered = gap.lower()
-        if any(marker in lowered for marker in OUT_OF_SCOPE_GAP_MARKERS):
-            continue
-        filtered.append(gap)
-    return sorted(filtered)
-
-
 def _filter_contextually_covered_gaps(
     coverage: Dict[str, List[str]],
     summary_markdown: str,
     sources: List[Dict[str, Any]],
     query_history: List[str],
 ) -> Dict[str, List[str]]:
-    context_parts = [summary_markdown, " ".join(query_history)]
-    for source in sources:
-        context_parts.extend(
-            [
-                str(source.get("title") or ""),
-                str(source.get("snippet") or ""),
-                str(source.get("query") or ""),
-            ]
-        )
-    context = " ".join(context_parts).lower()
-    gaps = []
-    for gap in coverage.get("gaps", []):
-        lowered = gap.lower()
-        if ("military" in lowered or "security" in lowered) and any(
-            marker in context
-            for marker in (
-                "maritime security",
-                "de-escalation",
-                "freedom of navigation",
-                "naval patrol",
-                "shipping lane",
-                "crowded shipping lanes",
-            )
-        ):
-            continue
-        if "economic" in lowered and any(
-            marker in context
-            for marker in (
-                "insurance",
-                "shipping delay",
-                "freight rate",
-                "supply chain",
-                "importer",
-                "small business",
-                "energy market",
-            )
-        ):
-            continue
-        if ("small business" in lowered or "shipping delay" in lowered) and any(
-            marker in context
-            for marker in (
-                "shipping delay",
-                "supply chain",
-                "importer",
-                "small business",
-                "freight rate",
-                "logistics cost",
-            )
-        ):
-            continue
-        gaps.append(gap)
     return {
         "covered": sorted(_dedupe_strings(coverage.get("covered", []))),
-        "gaps": sorted(_dedupe_strings(gaps)),
+        "gaps": sorted(_dedupe_strings(coverage.get("gaps", []))),
     }
 
 
-def _relocate_scenario_boundary_claims(markdown: str) -> tuple[str, List[str]]:
-    boundary_match = re.search(r"(?im)^##\s+Scenario Assumptions Boundary\s*$", markdown)
-    if boundary_match:
-        prefix = markdown[:boundary_match.start()]
-        suffix = markdown[boundary_match.start():]
-    else:
-        prefix = markdown
-        suffix = ""
-
-    relocated: List[str] = []
-    kept_lines = []
-    for line in prefix.splitlines():
-        if line.startswith("#"):
-            kept_lines.append(line)
-            continue
-        if not any(marker.lower() in line.lower() for marker in SCENARIO_BOUNDARY_MARKERS):
-            kept_lines.append(line)
-            continue
-
-        kept_sentences = []
-        for sentence in _split_sentences(line):
-            if any(marker.lower() in sentence.lower() for marker in SCENARIO_BOUNDARY_MARKERS):
-                cleaned = re.sub(r"\s*\[R\d+(?:\s*,\s*R\d+)*\]", "", sentence)
-                cleaned = re.sub(r"\s*\(\s*\)", "", cleaned).strip()
-                if cleaned:
-                    relocated.append(cleaned)
-            else:
-                kept_sentences.append(sentence)
-        if kept_sentences:
-            kept_lines.append(" ".join(kept_sentences))
-
-    return "\n".join(kept_lines).strip() + ("\n\n" if suffix and kept_lines else "") + suffix.strip(), relocated
-
-
-def _split_sentences(line: str) -> List[str]:
-    if not line.strip():
-        return []
-    bullet = ""
-    stripped = line.strip()
-    if stripped.startswith("- "):
-        bullet = "- "
-        stripped = stripped[2:].strip()
-    sentences = re.split(r"(?<=[.!?])\s+", stripped)
-    return [bullet + sentence if idx == 0 and bullet else sentence for idx, sentence in enumerate(sentences) if sentence]
+def _seed_gate_metadata(
+    *,
+    sources: List[Dict[str, Any]],
+    coverage: Dict[str, List[str]],
+    group_coverage: Dict[str, Any],
+    summary_markdown: str,
+    query_history: List[str],
+    simulation_requirement: str,
+) -> tuple[Dict[str, Any], Dict[str, List[str]], Dict[str, Any]]:
+    filtered_coverage = _filter_contextually_covered_gaps(
+        coverage,
+        summary_markdown,
+        sources,
+        query_history,
+    )
+    supplemented_group_coverage = _supplement_group_coverage_from_sources(
+        group_coverage,
+        sources,
+        simulation_requirement,
+    )
+    final_coverage = _filter_group_incident_coverage_gaps(
+        filtered_coverage,
+        supplemented_group_coverage,
+    )
+    return (
+        {
+            "sources": sources,
+            "coverage": final_coverage,
+            "group_coverage": supplemented_group_coverage,
+        },
+        final_coverage,
+        supplemented_group_coverage,
+    )
 
 
-def _extract_scenario_assumptions(document_texts: List[str]) -> List[str]:
-    text = _join_excerpt(document_texts, max_chars=12000)
-    lowered = text.lower()
-    return [term for term in SCENARIO_BOUNDARY_TERMS if term.lower() in lowered]
+def evaluate_web_research_seed_gate(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Evaluate whether generated web research is strong enough as the seed corpus."""
+    sources = metadata.get("sources", []) if isinstance(metadata, dict) else []
+    fetched_summarized_sources = [
+        source
+        for source in sources
+        if isinstance(source, dict)
+        and source.get("fetched") is True
+        and _clean_optional(source.get("content_summary"))
+    ]
+    domains = {
+        domain
+        for domain in (
+            _normalized_source_domain(str(source.get("url") or ""))
+            for source in fetched_summarized_sources
+        )
+        if domain
+    }
+    coverage = metadata.get("coverage") if isinstance(metadata.get("coverage"), dict) else {}
+    coverage_gaps = _dedupe_strings(coverage.get("gaps", []))
+
+    group_coverage = _group_coverage_from_response(metadata.get("group_coverage", {}))
+    influencing_groups = _dedupe_strings(group_coverage.get("influencing_groups", []))
+    affected_groups = _dedupe_strings(group_coverage.get("affected_groups", []))
+    material_groups = _dedupe_strings(influencing_groups + affected_groups)
+    incidents = [
+        incident
+        for incident in _normalize_group_incidents(group_coverage.get("incidents", []))
+        if _incident_has_source(incident)
+    ]
+    recent_incidents = [incident for incident in incidents if incident["incident_class"] == "recent"]
+    scenario_related_incidents = [
+        incident for incident in incidents if incident["incident_class"] == "scenario_related"
+    ]
+    groups_with_recent = {incident["group"].lower() for incident in recent_incidents}
+    groups_with_scenario = {incident["group"].lower() for incident in scenario_related_incidents}
+    missing_recent = [
+        group for group in material_groups if group.lower() not in groups_with_recent
+    ]
+    missing_scenario = [
+        group for group in material_groups if group.lower() not in groups_with_scenario
+    ]
+    missing_group_roles = []
+    if not group_coverage.get("influencing_groups"):
+        missing_group_roles.append("influencing_groups")
+    if not group_coverage.get("affected_groups"):
+        missing_group_roles.append("affected_groups")
+
+    result = {
+        "passed": False,
+        "failure_reason": "evidence_gate_failed",
+        "fetched_summary_count": len(fetched_summarized_sources),
+        "distinct_domain_count": len(domains),
+        "material_group_count": len(material_groups),
+        "influencing_group_count": len(influencing_groups),
+        "affected_group_count": len(affected_groups),
+        "remaining_coverage_gaps": coverage_gaps,
+        "recent_incident_count": len(recent_incidents),
+        "scenario_related_incident_count": len(scenario_related_incidents),
+        "groups_missing_recent_incidents": missing_recent,
+        "groups_missing_scenario_related_incidents": missing_scenario,
+        "missing_group_roles": missing_group_roles,
+        "required_thresholds": dict(WEB_RESEARCH_GATE_THRESHOLDS),
+    }
+    passed = (
+        result["fetched_summary_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["fetched_summary_count"]
+        and result["distinct_domain_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["distinct_domain_count"]
+        and result["material_group_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["material_group_count"]
+        and result["influencing_group_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["influencing_group_count"]
+        and result["affected_group_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["affected_group_count"]
+        and not coverage_gaps
+        and result["recent_incident_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["recent_incident_count"]
+        and result["scenario_related_incident_count"] >= WEB_RESEARCH_GATE_THRESHOLDS["scenario_related_incident_count"]
+        and not missing_recent
+        and not missing_scenario
+        and not missing_group_roles
+    )
+    result["passed"] = passed
+    if passed:
+        result["failure_reason"] = None
+    return result
+
+
+def _normalized_source_domain(url: str) -> Optional[str]:
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return None
+    hostname = hostname.lower().rstrip(".")
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname
+
+
+def _incident_has_source(incident: Dict[str, Any]) -> bool:
+    if incident.get("source_ids"):
+        return True
+    return bool(re.search(r"\[R\d+\]", str(incident.get("summary") or "")))

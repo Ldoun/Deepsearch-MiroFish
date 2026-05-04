@@ -81,7 +81,7 @@ import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
-import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
+import { getPendingResearchSeed, clearPendingResearchSeed } from '../store/pendingResearchSeed'
 
 const route = useRoute()
 const router = useRouter()
@@ -100,7 +100,7 @@ const graphLoading = ref(false)
 const error = ref('')
 const projectData = ref(null)
 const graphData = ref(null)
-const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
+const currentPhase = ref(-1) // -1: Start, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
@@ -187,26 +187,25 @@ const initProject = async () => {
 }
 
 const handleNewProject = async () => {
-  const pending = getPendingUpload()
-  if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
-    addLog('Error: No pending files found for new project.')
+  const pending = getPendingResearchSeed()
+  if (!pending.isPending || !pending.simulationRequirement.trim()) {
+    error.value = 'No simulation prompt found.'
+    addLog('Error: No simulation prompt found for new project.')
     return
   }
   
   try {
     loading.value = true
     currentPhase.value = 0
-    ontologyProgress.value = { message: 'Uploading and analyzing docs...' }
-    addLog('Starting ontology generation: Uploading files...')
+    ontologyProgress.value = { message: 'Generating web research seed...' }
+    addLog('Starting ontology generation from web research seed...')
     
-    const formData = new FormData()
-    pending.files.forEach(f => formData.append('files', f))
-    formData.append('simulation_requirement', pending.simulationRequirement)
-    
-    const res = await generateOntology(formData)
+    const res = await generateOntology({
+      simulation_requirement: pending.simulationRequirement,
+      additional_context: pending.additionalContext || undefined
+    })
     if (res.success) {
-      clearPendingUpload()
+      clearPendingResearchSeed()
       currentProjectId.value = res.data.project_id
       projectData.value = res.data
       

@@ -246,7 +246,7 @@
               <div class="detail-section">
                 <div class="detail-label">Description</div>
                 <div class="detail-content">
-                  After uploading documents, LLM analyzes the content and automatically generates an ontology structure suitable for knowledge graph simulation (entity types + relationship types)
+                  After generating a web research seed, LLM analyzes the source-grounded content and automatically generates an ontology structure suitable for knowledge graph simulation (entity types + relationship types)
                 </div>
               </div>
               
@@ -317,7 +317,7 @@
               <div class="detail-section">
                 <div class="detail-label">Description</div>
                 <div class="detail-content">
-                  Based on the generated ontology, the documents are chunked and the Neo4j API is called to build the knowledge graph, extracting entities and relationships
+                  Based on the generated ontology, the web research seed is chunked and the Neo4j API is called to build the knowledge graph, extracting entities and relationships
                 </div>
               </div>
               
@@ -415,7 +415,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
-import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
+import { getPendingResearchSeed, clearPendingResearchSeed } from '../store/pendingResearchSeed'
 import * as d3 from 'd3'
 
 const route = useRoute()
@@ -432,7 +432,7 @@ const projectData = ref(null)
 const graphData = ref(null)
 const buildProgress = ref(null)
 const ontologyProgress = ref(null) // Ontology generation progress
-const currentPhase = ref(-1) // -1: Uploading, 0: Generating ontology, 1: Building graph, 2: Complete
+const currentPhase = ref(-1) // -1: Starting, 0: Generating ontology, 1: Building graph, 2: Complete
 const selectedItem = ref(null) // Selected node or edge
 const isFullScreen = ref(false)
 
@@ -555,7 +555,7 @@ const initProject = async () => {
   const paramProjectId = route.params.projectId
 
   if (paramProjectId === 'new') {
-    // New project: get pending upload data from store
+    // New project: get pending prompt data from store
     await handleNewProject()
   } else {
     // Load existing project
@@ -566,10 +566,10 @@ const initProject = async () => {
 
 // Handle new project - call ontology/generate API
 const handleNewProject = async () => {
-  const pending = getPendingUpload()
+  const pending = getPendingResearchSeed()
 
-  if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No files pending upload. Please go back to home and try again.'
+  if (!pending.isPending || !pending.simulationRequirement.trim()) {
+    error.value = 'No simulation prompt found. Please go back to home and try again.'
     loading.value = false
     return
   }
@@ -577,21 +577,17 @@ const handleNewProject = async () => {
   try {
     loading.value = true
     currentPhase.value = 0 // Ontology generation phase
-    ontologyProgress.value = { message: 'Uploading files and analyzing documents...' }
-
-    // Build FormData
-    const formDataObj = new FormData()
-    pending.files.forEach(file => {
-      formDataObj.append('files', file)
-    })
-    formDataObj.append('simulation_requirement', pending.simulationRequirement)
+    ontologyProgress.value = { message: 'Generating web research seed...' }
 
     // Call ontology generation API
-    const response = await generateOntology(formDataObj)
+    const response = await generateOntology({
+      simulation_requirement: pending.simulationRequirement,
+      additional_context: pending.additionalContext || undefined
+    })
 
     if (response.success) {
-      // Clear pending upload data
-      clearPendingUpload()
+      // Clear pending prompt data
+      clearPendingResearchSeed()
 
       // Update project ID and data
       currentProjectId.value = response.data.project_id
