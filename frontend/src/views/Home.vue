@@ -2,7 +2,7 @@
   <div class="home-container">
     <!-- Top Navigation Bar -->
     <nav class="navbar" :style="s.navbar">
-      <div class="nav-brand" :style="s.navBrand">MIROFISH OFFLINE</div>
+      <div class="nav-brand" :style="s.navBrand">DEEPSEARCH MIROFISH</div>
       <div class="nav-links" :style="s.navLinks">
         <a href="https://github.com/nikmcfly/MiroFish-Offline" target="_blank" class="github-link" :style="s.githubLink">
           Visit our Github <span>↗</span>
@@ -15,21 +15,21 @@
       <section class="hero-section" :style="s.heroSection">
         <div class="hero-left" :style="s.heroLeft">
           <div class="tag-row" :style="s.tagRow">
-            <span class="orange-tag" :style="s.orangeTag">Offline Multi-Agent Simulation Engine</span>
+            <span class="orange-tag" :style="s.orangeTag">Web Research Seed Engine</span>
             <span class="version-text" :style="s.versionText">/ v0.1-preview</span>
           </div>
 
           <h1 class="main-title" :style="s.mainTitle">
             Describe Any Scenario<br>
-            <span class="gradient-text" :style="s.gradientText">Predict What Happens Next</span>
+            <span class="gradient-text" :style="s.gradientText">Ground It With Web Research</span>
           </h1>
 
           <div class="hero-desc" :style="s.heroDesc">
             <p :style="s.heroDescP">
-              From a simulation prompt, <span :style="s.highlightBold">MiroFish Offline</span> generates a web research seed and builds a parallel world of <span :style="s.highlightOrange">autonomous AI agents</span> — running through local services. Inject variables, observe emergent behavior, and find <span :style="s.highlightCode">"local optima"</span> in complex social dynamics.
+              <span :style="s.highlightBold">Deepsearch MiroFish</span> turns a scenario prompt into web-search-enriched seed documents, gathering source-grounded incidents, groups, and context before the simulation setup begins.
             </p>
             <p class="slogan-text" :style="s.sloganText">
-              Your data never leaves your machine. The future is simulated locally<span :style="s.blinkingCursor">_</span>
+              Research-enriched seeds first. Local simulation follows<span :style="s.blinkingCursor">_</span>
             </p>
           </div>
 
@@ -38,7 +38,7 @@
 
         <div class="hero-right" :style="s.heroRight">
           <div class="logo-container" :style="s.logoContainer">
-            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" :style="s.heroLogo" />
+            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="Deepsearch MiroFish Logo" :style="s.heroLogo" />
           </div>
           <button :style="s.scrollDownBtn" type="button" aria-label="Scroll to Start Engine" @click="scrollToBottom">
             <span aria-hidden="true">↓</span>
@@ -56,7 +56,7 @@
 
           <h2 class="section-title" :style="s.sectionTitle">Ready</h2>
           <p class="section-desc" :style="s.sectionDesc">
-            Local prediction engine on standby. Enter a scenario prompt to initialize a simulation.
+            Research seed engine on standby. Enter a scenario prompt to generate enriched seed docs for simulation.
           </p>
 
           <div class="metrics-row" :style="s.metricsRow">

@@ -1,205 +1,321 @@
 <div align="center">
 
-<img src="./static/image/mirofish-offline-banner.png" alt="MiroFish Offline" width="100%"/>
+<img src="./static/image/mirofish-offline-banner.png" alt="Deepsearch MiroFish" width="100%"/>
 
-# MiroFish-Offline
+# Deepsearch MiroFish
 
-**Fully local fork of [MiroFish](https://github.com/666ghj/MiroFish) — no cloud APIs required. English UI.**
-
-*A multi-agent swarm intelligence engine that simulates public opinion, market sentiment, and social dynamics. Entirely on your hardware.*
+**Prompt-driven web research seeds for local multi-agent social simulation.**
 
 [![GitHub Stars](https://img.shields.io/github/stars/nikmcfly/MiroFish-Offline?style=flat-square&color=DAA520)](https://github.com/nikmcfly/MiroFish-Offline/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/nikmcfly/MiroFish-Offline?style=flat-square)](https://github.com/nikmcfly/MiroFish-Offline/network)
-[![Docker](https://img.shields.io/badge/Docker-Build-2496ED?style=flat-square&logo=docker&logoColor=white)](https://hub.docker.com/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](./LICENSE)
 
 </div>
 
-## What is this?
+## What This Project Does
 
-MiroFish is a multi-agent simulation engine: upload any document (press release, policy draft, financial report), and it generates hundreds of AI agents with unique personalities that simulate the public reaction on social media. Posts, arguments, opinion shifts — hour by hour.
+Deepsearch MiroFish turns a scenario prompt into a source-grounded research seed, then uses that seed to prepare and run a local social simulation.
 
-The [original MiroFish](https://github.com/666ghj/MiroFish) was built for the Chinese market (Chinese UI, Zep Cloud for knowledge graphs, DashScope API). This fork makes it **fully local and fully English**:
+Instead of asking the user to upload a "reality seed" document, the app performs web research first:
 
-| Original MiroFish | MiroFish-Offline |
-|---|---|
-| Chinese UI | **English UI** (1,000+ strings translated) |
-| Zep Cloud (graph memory) | **Neo4j Community Edition 5.15** |
-| DashScope / OpenAI API (LLM) | **Ollama** (qwen2.5, llama3, etc.) |
-| Zep Cloud embeddings | **nomic-embed-text** via Ollama |
-| Cloud API keys required | **Zero cloud dependencies** |
+1. The user enters a scenario prompt.
+2. The backend generates search queries and uses SearXNG to retrieve web results.
+3. Source pages are fetched and summarized into an enriched `web_research.md` seed document.
+4. The seed document becomes the starting corpus for ontology generation and Neo4j graph construction.
+5. The app prepares agents, runs the local simulation, generates a report, and supports report-grounded interaction.
+
+The default stack is local-first:
+
+- Frontend: Vue + Vite
+- Backend: Flask
+- Search: SearXNG
+- Graph storage: Neo4j Community Edition
+- LLM and embeddings: Ollama
+- Simulation runtime: OASIS / CAMEL components
+
+No `ZEP_API_KEY` is required. No real cloud `LLM_API_KEY` is required for the default local Ollama setup.
+
+## Built Upon
+
+This project is built upon and adapted from:
+
+- Original MiroFish: https://github.com/666ghj/MiroFish
+- MiroFish-Offline fork: https://github.com/nikmcfly/MiroFish-Offline
+
+The current workspace continues the offline fork with prompt-driven web research seed generation and the Deepsearch MiroFish frontend positioning.
 
 ## Workflow
 
-1. **Graph Build** — Extracts entities (people, companies, events) and relationships from your document. Builds a knowledge graph with individual and group memory via Neo4j.
-2. **Env Setup** — Generates hundreds of agent personas, each with unique personality, opinion bias, reaction speed, influence level, and memory of past events.
-3. **Simulation** — Agents interact on simulated social platforms: posting, replying, arguing, shifting opinions. The system tracks sentiment evolution, topic propagation, and influence dynamics in real time.
-4. **Report** — A ReportAgent analyzes the post-simulation environment, interviews a focus group of agents, searches the knowledge graph for evidence, and generates a structured analysis.
-5. **Interaction** — Chat with any agent from the simulated world. Ask them why they posted what they posted. Full memory and personality persists.
+1. **Web Research Seed** - Generate a source-grounded markdown seed from the scenario prompt using SearXNG search, source fetching, and local LLM summarization.
+2. **Graph Build** - Generate ontology from the seed, extract entities and relationships, and build a Neo4j knowledge graph.
+3. **Environment Setup** - Create simulation configuration and agent profiles from the graph and research context.
+4. **Simulation** - Run local multi-agent interaction over the generated scenario environment.
+5. **Report** - Generate a structured report from simulation output and graph evidence.
+6. **Interaction** - Ask follow-up questions against the report and simulated context.
 
-## Screenshot
+## Ports
 
-<div align="center">
-<img src="./static/image/mirofish-offline-screenshot.jpg" alt="MiroFish Offline — English UI" width="100%"/>
-</div>
+Default local ports:
 
-## Quick Start
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:5001`
+- Neo4j Browser: `http://localhost:7474`
+- Neo4j Bolt: `bolt://localhost:7687`
+- Ollama: `http://localhost:11434`
+- SearXNG: `http://localhost:8080`
 
-### Prerequisites
-
-- Docker & Docker Compose (recommended), **or**
-- Python 3.11+, Node.js 18+, Neo4j 5.15+, Ollama
-
-### Option A: Docker (easiest)
-
-```bash
-git clone https://github.com/nikmcfly/MiroFish-Offline.git
-cd MiroFish-Offline
-cp .env.example .env
-
-# Start all services (Neo4j, Ollama, MiroFish)
-docker compose up -d
-
-# Pull the required models into Ollama
-docker exec mirofish-ollama ollama pull qwen2.5:32b
-docker exec mirofish-ollama ollama pull nomic-embed-text
-```
-
-Open `http://localhost:3000` — that's it.
-
-### Option B: Manual
-
-**1. Start Neo4j**
+When using ngrok, expose the frontend port:
 
 ```bash
-docker run -d --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/mirofish \
-  neo4j:5.15-community
+ngrok http 3000
 ```
 
-**2. Start Ollama & pull models**
+## Prerequisites
+
+- Conda
+- Python 3.11
+- Node.js 18+ and npm
+- Docker, for local Neo4j and SearXNG
+- Ollama, running on the host machine
+
+Pull the default local models:
 
 ```bash
-ollama serve &
-ollama pull qwen2.5:32b      # LLM (or qwen2.5:14b for less VRAM)
-ollama pull nomic-embed-text  # Embeddings (768d)
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 ```
 
-**3. Configure & run backend**
+You can use a larger chat model by setting `LLM_MODEL_NAME`, for example `qwen2.5:14b` or `qwen2.5:32b`, if your hardware can run it.
+
+## Recommended Run Path In This Workspace
+
+From the parent workspace root:
 
 ```bash
-cp .env.example .env
-# Edit .env if your Neo4j/Ollama are on non-default ports
-
-cd backend
-pip install -r requirements.txt
-python run.py
+cd /path/to/persona_simulation
+./scripts/run_local_mirofish.sh
 ```
 
-**4. Run frontend**
+The script starts or checks:
+
+- SearXNG on port `8080`
+- Neo4j on ports `7474` and `7687`
+- Flask backend on port `5001`
+- Vue frontend on port `3000`
+
+It uses the Conda environment named `mirofish` by default.
+
+Useful overrides:
+
+```bash
+CONDA_ENV=mirofish \
+LLM_MODEL_NAME=qwen2.5:7b \
+FRONTEND_PORT=3000 \
+FLASK_PORT=5001 \
+./scripts/run_local_mirofish.sh
+```
+
+If you only want the backend:
+
+```bash
+START_FRONTEND=false ./scripts/run_local_mirofish.sh
+```
+
+## Manual Setup
+
+Run these commands from the `MiroFish-Offline` directory unless noted otherwise.
+
+### 1. Create the Python environment
+
+```bash
+conda create -n mirofish python=3.11 -y
+conda run -n mirofish pip install -r backend/requirements.txt
+```
+
+### 2. Install frontend dependencies
 
 ```bash
 cd frontend
 npm install
-npm run dev
+cd ..
 ```
 
-Open `http://localhost:3000`.
-
-## Configuration
-
-All settings are in `.env` (copy from `.env.example`):
+### 3. Start Ollama
 
 ```bash
-# LLM — points to local Ollama (OpenAI-compatible API)
+ollama serve
+```
+
+In another terminal:
+
+```bash
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+```
+
+### 4. Start Neo4j
+
+```bash
+docker run -d \
+  --name mirofish-neo4j-host \
+  --network host \
+  -e NEO4J_AUTH=neo4j/mirofish \
+  -e 'NEO4J_PLUGINS=["apoc"]' \
+  -e NEO4J_server_memory_heap_initial__size=512m \
+  -e NEO4J_server_memory_heap_max__size=2g \
+  -v mirofish-offline_neo4j_data:/data \
+  -v mirofish-offline_neo4j_logs:/logs \
+  docker.io/library/neo4j:5.18-community
+```
+
+### 5. Start SearXNG with JSON enabled
+
+```bash
+mkdir -p .cache/searxng
+cat > .cache/searxng/settings.yml <<'YAML'
+use_default_settings: true
+search:
+  formats:
+    - html
+    - json
+server:
+  limiter: false
+  public_instance: false
+YAML
+
+docker run -d \
+  --name mirofish-searxng \
+  -p 8080:8080 \
+  -v "$PWD/.cache/searxng:/etc/searxng:rw" \
+  docker.io/searxng/searxng:latest
+```
+
+### 6. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+Default local values:
+
+```bash
 LLM_API_KEY=ollama
 LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL_NAME=qwen2.5:32b
+LLM_MODEL_NAME=qwen2.5:7b
+OLLAMA_NUM_CTX=8192
 
-# Neo4j
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_BASE_URL=http://localhost:11434
+
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=mirofish
 
-# Embeddings
-EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_BASE_URL=http://localhost:11434
+WEB_RESEARCH_ENABLED=true
+WEB_RESEARCH_SEARXNG_URL=http://localhost:8080
+
+OPENAI_API_KEY=ollama
+OPENAI_API_BASE_URL=http://localhost:11434/v1
+FLASK_PORT=5001
 ```
 
-Works with any OpenAI-compatible API — swap Ollama for Claude, GPT, or any other provider by changing `LLM_BASE_URL` and `LLM_API_KEY`.
+### 7. Start the backend
 
-## Architecture
-
-This fork introduces a clean abstraction layer between the application and the graph database:
-
-```
-┌─────────────────────────────────────────┐
-│              Flask API                   │
-│  graph.py  simulation.py  report.py     │
-└──────────────┬──────────────────────────┘
-               │ app.extensions['neo4j_storage']
-┌──────────────▼──────────────────────────┐
-│           Service Layer                  │
-│  EntityReader  GraphToolsService         │
-│  GraphMemoryUpdater  ReportAgent         │
-└──────────────┬──────────────────────────┘
-               │ storage: GraphStorage
-┌──────────────▼──────────────────────────┐
-│         GraphStorage (abstract)          │
-│              │                            │
-│    ┌─────────▼─────────┐                │
-│    │   Neo4jStorage     │                │
-│    │  ┌───────────────┐ │                │
-│    │  │ EmbeddingService│ ← Ollama       │
-│    │  │ NERExtractor   │ ← Ollama LLM   │
-│    │  │ SearchService  │ ← Hybrid search │
-│    │  └───────────────┘ │                │
-│    └───────────────────┘                │
-└─────────────────────────────────────────┘
-               │
-        ┌──────▼──────┐
-        │  Neo4j CE   │
-        │  5.15       │
-        └─────────────┘
+```bash
+cd backend
+conda run -n mirofish --no-capture-output python run.py
 ```
 
-**Key design decisions:**
+The backend should respond at:
 
-- `GraphStorage` is an abstract interface — swap Neo4j for any other graph DB by implementing one class
-- Dependency injection via Flask `app.extensions` — no global singletons
-- Hybrid search: 0.7 × vector similarity + 0.3 × BM25 keyword search
-- Synchronous NER/RE extraction via local LLM (replaces Zep's async episodes)
-- All original dataclasses and LLM tools (InsightForge, Panorama, Agent Interviews) preserved
+```bash
+curl http://localhost:5001/health
+```
 
-## Hardware Requirements
+### 8. Start the frontend
 
-| Component | Minimum | Recommended |
-|---|---|---|
-| RAM | 16 GB | 32 GB |
-| VRAM (GPU) | 10 GB (14b model) | 24 GB (32b model) |
-| Disk | 20 GB | 50 GB |
-| CPU | 4 cores | 8+ cores |
+In another terminal:
 
-CPU-only mode works but is significantly slower for LLM inference. For lighter setups, use `qwen2.5:14b` or `qwen2.5:7b`.
+```bash
+cd frontend
+VITE_API_BASE_URL=/api npm run dev -- --host 0.0.0.0 --port 3000
+```
 
-## Use Cases
+Open:
 
-- **PR crisis testing** — simulate the public reaction to a press release before publishing
-- **Trading signal generation** — feed financial news and observe simulated market sentiment
-- **Policy impact analysis** — test draft regulations against simulated public response
-- **Creative experiments** — someone fed it a classical Chinese novel with a lost ending; the agents wrote a narratively consistent conclusion
+```text
+http://localhost:3000
+```
+
+## Docker Compose Notes
+
+`docker-compose.yml` starts the app, Neo4j, and Ollama containers, but the current web research flow also needs a JSON-enabled SearXNG service. For the most complete local run in this workspace, prefer the helper script from the parent workspace root:
+
+```bash
+./scripts/run_local_mirofish.sh
+```
+
+If you use Docker Compose directly, make sure SearXNG is also running and set:
+
+```bash
+WEB_RESEARCH_ENABLED=true
+WEB_RESEARCH_SEARXNG_URL=http://host.docker.internal:8080
+```
+
+Container-to-container networking may require service-name URLs instead of `localhost`.
+
+## Hardware Guidance
+
+Minimum practical development setup:
+
+- RAM: 16 GB
+- Disk: 20 GB free
+- CPU: 4 cores
+- GPU: recommended for local LLM speed
+
+Model guidance:
+
+- `qwen2.5:7b`: lighter local development
+- `qwen2.5:14b`: better quality if hardware allows
+- `qwen2.5:32b`: heavier runs with stronger reasoning, requires substantially more memory
+
+## Troubleshooting
+
+Check backend health:
+
+```bash
+curl http://localhost:5001/health
+```
+
+Check SearXNG JSON output:
+
+```bash
+curl 'http://localhost:8080/search?q=test&format=json'
+```
+
+Check Ollama models:
+
+```bash
+ollama list
+```
+
+If the first research or ontology request is slow, Ollama may be cold-starting the model. Let the request continue or warm the model manually:
+
+```bash
+curl http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:7b","prompt":"ping","stream":false}'
+```
 
 ## License
 
-AGPL-3.0 — same as the original MiroFish project. See [LICENSE](./LICENSE).
+AGPL-3.0. See [LICENSE](./LICENSE).
 
-## Credits & Attribution
+## Credits
 
-This is a modified fork of [MiroFish](https://github.com/666ghj/MiroFish) by [666ghj](https://github.com/666ghj), originally supported by [Shanda Group](https://www.shanda.com/). The simulation engine is powered by [OASIS](https://github.com/camel-ai/oasis) from the CAMEL-AI team.
+Deepsearch MiroFish is based on:
 
-**Modifications in this fork:**
-- Backend migrated from Zep Cloud to local Neo4j CE 5.15 + Ollama
-- Entire frontend translated from Chinese to English (20 files, 1,000+ strings)
-- All Zep references replaced with Neo4j across the UI
-- Rebranded to MiroFish Offline
+- https://github.com/666ghj/MiroFish
+- https://github.com/nikmcfly/MiroFish-Offline
+
+The simulation runtime uses OASIS / CAMEL components from the CAMEL-AI ecosystem.
