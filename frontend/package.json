@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
+    "check:api-urls": "node scripts/check-api-url-prefix.mjs",
+    "check:api-contracts": "node scripts/check-api-url-prefix.mjs && node scripts/check-non-idempotent-api.mjs && node scripts/check-report-chat-response.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

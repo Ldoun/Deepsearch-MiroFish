@@ -249,6 +249,11 @@ def generate_ontology():
 
         gate_result = evaluate_web_research_seed_gate(research_result.metadata)
         if not gate_result["passed"]:
+            logger.warning(
+                "Web research evidence gate failed for %s: %s",
+                project.project_id,
+                gate_result,
+            )
             ProjectManager.delete_project(project.project_id)
             return jsonify({
                 "success": False,

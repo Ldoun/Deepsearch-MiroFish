@@ -1,9 +1,13 @@
 import axios from 'axios'
+import { resolveApiBaseURL } from './baseUrl'
+
+const DEFAULT_API_TIMEOUT_MS = 1800000
+const apiTimeout = Number(import.meta.env.VITE_API_TIMEOUT_MS || DEFAULT_API_TIMEOUT_MS)
 
 // Create axios instance
 const service = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001',
-  timeout: 300000, // 5 minute timeout (ontology generation may require longer time)
+  baseURL: resolveApiBaseURL(),
+  timeout: Number.isFinite(apiTimeout) && apiTimeout > 0 ? apiTimeout : DEFAULT_API_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json'
   }

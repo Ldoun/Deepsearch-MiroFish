@@ -8,6 +8,7 @@ import json
 import os
 import re
 import socket
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -291,11 +292,11 @@ class SafeUrlFetcher:
         *,
         timeout_seconds: int = 20,
         max_source_bytes: int = 200000,
-        request_get: Callable[..., Any] = requests.get,
+        request_get: Optional[Callable[..., Any]] = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.max_source_bytes = max_source_bytes
-        self.request_get = request_get
+        self.request_get = request_get or requests.get
 
     def validate_url(self, url: str) -> None:
         parsed = urlparse(url)
@@ -316,7 +317,7 @@ class SafeUrlFetcher:
             self.validate_url(current_url)
             response = self.request_get(
                 current_url,
-                timeout=self.timeout_seconds,
+                timeout=self._request_timeout(),
                 headers={"User-Agent": "MiroFish-WebResearch/1.0"},
                 stream=True,
                 allow_redirects=False,
@@ -343,6 +344,12 @@ class SafeUrlFetcher:
             return text
 
         raise WebResearchError("Too many source redirects")
+
+    def _request_timeout(self):
+        if self.request_get is requests.get:
+            phase_timeout = max(1, min(self.timeout_seconds, 5))
+            return (phase_timeout, phase_timeout)
+        return self.timeout_seconds
 
     def _read_limited(self, response) -> bytes:
         chunks: List[bytes] = []
@@ -646,6 +653,7 @@ class WebResearchService:
             raise WebResearchError("Source fetcher is not configured")
 
         results = self.search_client.search(query, self.config.results_per_query)
+        records_to_fetch: List[Dict[str, Any]] = []
         for item in results:
             url = item["url"]
             if not self._source_is_usable_search_result(url):
@@ -665,13 +673,33 @@ class WebResearchService:
                 "fetched": False,
                 "error": None,
             }
-            try:
-                text = self.fetcher.fetch(url)
-                record["fetched"] = True
-                fetched_sources.append({**record, "text": text})
-            except Exception as exc:
-                record["error"] = str(exc)
             sources.append(record)
+            records_to_fetch.append(record)
+
+        if not records_to_fetch:
+            return fetched_sources
+
+        max_workers = min(4, len(records_to_fetch))
+        executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="web-research-fetch")
+        try:
+            future_pairs = [(record, executor.submit(self.fetcher.fetch, record["url"])) for record in records_to_fetch]
+            done, not_done = wait(
+                [future for _record, future in future_pairs],
+                timeout=self.config.timeout_seconds,
+            )
+            for record, future in future_pairs:
+                if future in not_done:
+                    future.cancel()
+                    record["error"] = f"Source fetch exceeded WEB_RESEARCH_TIMEOUT_SECONDS ({self.config.timeout_seconds}s)"
+                    continue
+                try:
+                    text = future.result()
+                    record["fetched"] = True
+                    fetched_sources.append({**record, "text": text})
+                except Exception as exc:
+                    record["error"] = str(exc)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         return fetched_sources
 
     def _summarize_sources(
@@ -852,8 +880,25 @@ class WebResearchService:
     ) -> List[str]:
         text = f"{simulation_requirement}\n{_join_excerpt(document_texts)}".lower()
         queries = []
-        if any(term in text for term in ("strait of hormuz", "shipping", "tanker", "maritime")):
+        if any(term in text for term in ("strait of hormuz", "strait of hormous", "shipping", "tanker", "maritime")):
             queries.append("Strait of Hormuz shipping disruption tanker chokepoint energy markets")
+        if any(term in text for term in ("strait of hormous", "us-iran", "u.s.-iran", "military", "naval", "torpedo")):
+            queries.extend(
+                [
+                    "Strait of Hormuz recent naval incident maritime security regional officials",
+                    "Strait of Hormuz energy market insurance premium recent incident",
+                    "Strait of Hormuz shipping workers seafarer safety recent incident",
+                ]
+            )
+        if any(term in text for term in ("south korean", "south korea", "korean military", "korea naval")):
+            queries.extend(
+                [
+                    "South Korea Strait of Hormuz naval deployment public reaction recent incident",
+                    "South Korean naval personnel overseas deployment Iran maritime security incident",
+                ]
+            )
+        if any(term in text for term in ("strait of hormous", "humanitarian", "aid", "relief")):
+            queries.append("Strait of Hormuz humanitarian aid shipping disruption maritime incident")
         if any(term in text for term in ("energy-market", "energy market", "insurance", "oil", "fuel")):
             queries.append("maritime insurance risk energy market shipping disruption")
         if any(term in text for term in ("misinformation", "rumor", "social media", "public protest", "nationalism")):
@@ -1230,6 +1275,39 @@ GROUP_SOURCE_PATTERNS = [
             "workers",
         },
         "relevance": "Crew safety, route changes, and port pressure can change worker behavior and risk perception.",
+    },
+    {
+        "name": "South Korean public",
+        "role": "affected",
+        "keywords": {
+            "south",
+            "korean",
+            "korea",
+            "public",
+            "opinion",
+            "domestic",
+            "deployment",
+            "military",
+            "naval",
+            "iran",
+        },
+        "relevance": "Domestic interpretation of overseas military involvement can affect legitimacy, protest risk, and trust in official messaging.",
+    },
+    {
+        "name": "Naval personnel",
+        "role": "affected",
+        "keywords": {
+            "military",
+            "naval",
+            "personnel",
+            "sailors",
+            "crew",
+            "torpedo",
+            "mine",
+            "removal",
+            "operation",
+        },
+        "relevance": "Operational risk and crew safety can shape institutional behavior and public perception of the mission.",
     },
     {
         "name": "Humanitarian groups",
@@ -1942,10 +2020,62 @@ def _filter_contextually_covered_gaps(
     sources: List[Dict[str, Any]],
     query_history: List[str],
 ) -> Dict[str, List[str]]:
+    context_keywords = _summary_keywords(
+        " ".join(
+            [_remove_section(summary_markdown, "Coverage Gaps"), " ".join(query_history)]
+            + [
+                " ".join(
+                    [
+                        str(source.get("title") or ""),
+                        str(source.get("snippet") or ""),
+                        str(source.get("query") or ""),
+                        str(source.get("content_summary") or ""),
+                    ]
+                )
+                for source in sources
+                if source.get("fetched") is True
+            ]
+        )
+    )
     return {
         "covered": sorted(_dedupe_strings(coverage.get("covered", []))),
-        "gaps": sorted(_dedupe_strings(coverage.get("gaps", []))),
+        "gaps": sorted(
+            gap
+            for gap in _dedupe_strings(coverage.get("gaps", []))
+            if not _is_non_research_gap(gap)
+            and not _gap_is_contextually_covered(gap, context_keywords)
+        ),
     }
+
+
+def _is_non_research_gap(gap: str) -> bool:
+    lowered = gap.lower().strip()
+    return lowered.startswith("detailed analysis of") or lowered.startswith("detailed simulation scenarios")
+
+
+def _gap_is_contextually_covered(gap: str, context_keywords: set[str]) -> bool:
+    generic = {
+        "analysis",
+        "benefits",
+        "consequences",
+        "detailed",
+        "details",
+        "impact",
+        "impacts",
+        "implications",
+        "involving",
+        "long-term",
+        "potential",
+        "risks",
+        "scenario",
+        "scenarios",
+        "simulation",
+    }
+    gap_keywords = _summary_keywords(gap) - generic
+    if not gap_keywords:
+        return False
+    required_overlap = min(2, len(gap_keywords))
+    return len(gap_keywords & context_keywords) >= required_overlap
 
 
 def _seed_gate_metadata(

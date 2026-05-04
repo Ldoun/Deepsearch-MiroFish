@@ -414,6 +414,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { normalizeReportAgentResponse } from '../utils/reportChat'
 
 const props = defineProps({
   reportId: String,
@@ -694,15 +695,17 @@ const sendToReportAgent = async (message) => {
     chat_history: historyForApi
   })
 
-  if (res.success && res.data) {
+  const responseContent = res.success && res.data ? normalizeReportAgentResponse(res.data) : ''
+
+  if (responseContent) {
     chatHistory.value.push({
       role: 'assistant',
-      content: res.data.response || res.data.answer || 'No response',
+      content: responseContent,
       timestamp: new Date().toISOString()
     })
     addLog('Report Agent replied')
   } else {
-    throw new Error(res.error || 'Request failed')
+    throw new Error(res.error || 'No response data')
   }
 }
 
