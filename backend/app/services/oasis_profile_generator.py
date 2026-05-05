@@ -188,13 +188,17 @@ class OasisProfileGenerator:
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
+        self.llm_timeout_seconds = Config.LLM_TIMEOUT_SECONDS
+        self.llm_max_retries = Config.LLM_MAX_RETRIES
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=self.llm_timeout_seconds,
+            max_retries=self.llm_max_retries,
         )
 
         # GraphStorage for hybrid search enrichment
@@ -479,7 +483,6 @@ class OasisProfileGenerator:
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
                 )
 
                 content = response.choices[0].message.content
@@ -519,13 +522,12 @@ class OasisProfileGenerator:
                 import time
                 time.sleep(1 * (attempt + 1))  # Exponential backoff
 
-        logger.warning(f"LLM persona generation failed ({max_attempts} attempts): {last_error}, using rule-based generation")
-        return self._generate_profile_rule_based(
-            entity_name, entity_type, entity_summary, entity_attributes
-        )
+        raise RuntimeError(
+            f"LLM persona generation failed after {max_attempts} attempts"
+        ) from last_error
     
     def _fix_truncated_json(self, content: str) -> str:
-        """Fix truncated JSON (output truncated by max_tokens limit)"""
+        """Fix truncated JSON when the model output is cut off."""
         import re
 
         # If JSON is truncated, try to close it
@@ -878,17 +880,7 @@ Important:
 
             except Exception as e:
                 logger.error(f"Failed to generate persona for entity {entity.name}: {str(e)}")
-                # Create a fallback profile
-                fallback_profile = OasisAgentProfile(
-                    user_id=idx,
-                    user_name=self._generate_username(entity.name),
-                    name=entity.name,
-                    bio=f"{entity_type}: {entity.name}",
-                    persona=entity.summary or f"A participant in social discussions.",
-                    source_entity_uuid=entity.uuid,
-                    source_entity_type=entity_type,
-                )
-                return idx, fallback_profile, str(e)
+                raise
 
         logger.info(f"Starting parallel generation of {total} agent personas (parallel count: {parallel_count})...")
         print(f"\n{'='*60}")
@@ -926,26 +918,11 @@ Important:
                             f"Completed {current}/{total}: {entity.name} ({entity_type})"
                         )
 
-                    if error:
-                        logger.warning(f"[{current}/{total}] {entity.name} using fallback persona: {error}")
-                    else:
-                        logger.info(f"[{current}/{total}] Successfully generated persona: {entity.name} ({entity_type})")
+                    logger.info(f"[{current}/{total}] Successfully generated persona: {entity.name} ({entity_type})")
 
                 except Exception as e:
                     logger.error(f"Exception occurred while processing entity {entity.name}: {str(e)}")
-                    with lock:
-                        completed_count[0] += 1
-                    profiles[idx] = OasisAgentProfile(
-                        user_id=idx,
-                        user_name=self._generate_username(entity.name),
-                        name=entity.name,
-                        bio=f"{entity_type}: {entity.name}",
-                        persona=entity.summary or "A participant in social discussions.",
-                        source_entity_uuid=entity.uuid,
-                        source_entity_type=entity_type,
-                    )
-                    # Real-time file writing (even for fallback personas)
-                    save_profiles_realtime()
+                    raise
 
         print(f"\n{'='*60}")
         print(f"Persona generation complete! Generated {len([p for p in profiles if p])} agents")
@@ -1137,4 +1114,3 @@ Important:
         """[Deprecated] Please use save_profiles() method"""
         logger.warning("save_profiles_to_json is deprecated, please use save_profiles method")
         self.save_profiles(profiles, file_path, platform)
-

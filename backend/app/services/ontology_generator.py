@@ -4,6 +4,9 @@ Interface 1: Analyze text content and generate entity and relationship type defi
 """
 
 import json
+import multiprocessing
+import os
+import queue
 from typing import Dict, Any, List, Optional
 from ..utils.llm_client import LLMClient
 
@@ -155,6 +158,38 @@ B. **Specific types (8, designed based on text content)**:
 """
 
 
+def _ontology_chat_json_worker(
+    result_queue,
+    *,
+    api_key: Optional[str],
+    base_url: Optional[str],
+    model: Optional[str],
+    timeout: float,
+    max_retries: Optional[int],
+    messages: List[Dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> None:
+    try:
+        client = LLMClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        result_queue.put((
+            "ok",
+            client.chat_json(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ),
+        ))
+    except BaseException as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
 class OntologyGenerator:
     """
     Ontology generator
@@ -163,6 +198,10 @@ class OntologyGenerator:
 
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
+        self.llm_timeout_seconds = float(os.environ.get(
+            "ONTOLOGY_LLM_TIMEOUT_SECONDS",
+            os.environ.get("LLM_TIMEOUT_SECONDS", "180"),
+        ))
 
     def generate(
         self,
@@ -185,7 +224,7 @@ class OntologyGenerator:
         user_message = self._build_user_message(
             document_texts,
             simulation_requirement,
-            additional_context
+            additional_context,
         )
 
         messages = [
@@ -193,37 +232,37 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
 
-        # Call LLM
-        result = self.llm_client.chat_json(
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        try:
+            result = self._chat_json(messages=messages, temperature=0.3, max_tokens=4096)
+        except Exception as exc:
+            raise RuntimeError(f"Ontology LLM generation failed: {exc}") from exc
 
         # Validate and post-process
         result = self._validate_and_process(result)
 
         return result
 
-    # Maximum text length for LLM (50,000 characters)
-    MAX_TEXT_LENGTH_FOR_LLM = 50000
+    # Maximum text length for LLM. Local Ollama models can hang on very large enriched research seeds.
+    MAX_TEXT_LENGTH_FOR_LLM = 12000
 
     def _build_user_message(
         self,
         document_texts: List[str],
         simulation_requirement: str,
-        additional_context: Optional[str]
+        additional_context: Optional[str],
+        max_text_length: Optional[int] = None,
     ) -> str:
         """Build user message"""
 
         # Combine texts
         combined_text = "\n\n---\n\n".join(document_texts)
         original_length = len(combined_text)
+        max_text_length = max_text_length or int(os.environ.get("ONTOLOGY_MAX_TEXT_LENGTH_FOR_LLM", self.MAX_TEXT_LENGTH_FOR_LLM))
 
-        # If text exceeds 50,000 characters, truncate (only affects LLM input, not graph construction)
-        if len(combined_text) > self.MAX_TEXT_LENGTH_FOR_LLM:
-            combined_text = combined_text[:self.MAX_TEXT_LENGTH_FOR_LLM]
-            combined_text += f"\n\n...(Original text has {original_length} characters, first {self.MAX_TEXT_LENGTH_FOR_LLM} characters extracted for ontology analysis)..."
+        # If text exceeds the ontology limit, truncate only the ontology prompt input.
+        if len(combined_text) > max_text_length:
+            combined_text = combined_text[:max_text_length]
+            combined_text += f"\n\n...(Original text has {original_length} characters, first {max_text_length} characters extracted for ontology analysis)..."
 
         message = f"""## Simulation Requirements
 
@@ -253,7 +292,52 @@ Based on the above content, design entity types and relationship types suitable 
 """
 
         return message
-    
+
+    def _chat_json(self, *, messages: List[Dict[str, str]], temperature: float, max_tokens: int) -> Dict[str, Any]:
+        if not isinstance(self.llm_client, LLMClient):
+            return self.llm_client.chat_json(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        context_name = "fork" if "fork" in multiprocessing.get_all_start_methods() else None
+        mp_context = multiprocessing.get_context(context_name) if context_name else multiprocessing.get_context()
+        result_queue = mp_context.Queue(maxsize=1)
+        process = mp_context.Process(
+            target=_ontology_chat_json_worker,
+            kwargs={
+                "result_queue": result_queue,
+                "api_key": self.llm_client.api_key,
+                "base_url": self.llm_client.base_url,
+                "model": self.llm_client.model,
+                "timeout": self.llm_timeout_seconds,
+                "max_retries": getattr(self.llm_client, "max_retries", None),
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
+        process.daemon = True
+        process.start()
+        process.join(self.llm_timeout_seconds)
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+            if process.is_alive():
+                process.kill()
+                process.join(2)
+            raise TimeoutError(f"Ontology LLM call exceeded {self.llm_timeout_seconds:g}s")
+
+        try:
+            status, payload = result_queue.get(timeout=1)
+        except queue.Empty as exc:
+            raise RuntimeError(f"Ontology LLM call exited without a result (exit code {process.exitcode})") from exc
+
+        if status == "ok":
+            return payload
+        raise RuntimeError(f"Ontology LLM call failed: {payload}")
+
     def _validate_and_process(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and post-process result"""
 
@@ -446,4 +530,3 @@ Based on the above content, design entity types and relationship types suitable 
         code_lines.append('}')
 
         return '\n'.join(code_lines)
-

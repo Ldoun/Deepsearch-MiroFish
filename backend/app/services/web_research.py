@@ -5,9 +5,12 @@ from __future__ import annotations
 import html
 import ipaddress
 import json
+import multiprocessing
 import os
+import queue
 import re
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -46,6 +49,39 @@ WEB_RESEARCH_GATE_THRESHOLDS = {
     "recent_incident_count": 4,
     "scenario_related_incident_count": 4,
 }
+
+
+def _llm_chat_json_worker(
+    result_queue,
+    *,
+    api_key: Optional[str],
+    base_url: Optional[str],
+    model: Optional[str],
+    timeout: float,
+    max_retries: Optional[int],
+    messages: List[Dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> None:
+    """Run an LLM JSON call in a killable child process."""
+    try:
+        client = LLMClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        result = client.chat_json(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        result_queue.put(("ok", result))
+    except BaseException as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
 BOILERPLATE_CATEGORY_TERMS = {
     "automotive",
     "aviation",
@@ -155,6 +191,10 @@ LOW_VALUE_SOURCE_HOSTS = {
 class WebResearchError(Exception):
     """Raised when web research cannot complete safely."""
 
+    def __init__(self, message: str, *, diagnostics: Optional[List[Dict[str, Any]]] = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or []
+
 
 @dataclass
 class WebResearchConfig:
@@ -165,6 +205,9 @@ class WebResearchConfig:
     results_per_query: int = 5
     timeout_seconds: int = 20
     max_source_bytes: int = 200000
+    summary_source_limit: int = 10
+    summary_source_text_chars: int = 1200
+    llm_timeout_seconds: float = 120.0
 
     @classmethod
     def from_mapping(cls, mapping: Dict[str, Any]) -> "WebResearchConfig":
@@ -176,6 +219,9 @@ class WebResearchConfig:
             results_per_query=_parse_int(mapping.get("WEB_RESEARCH_RESULTS_PER_QUERY"), 5),
             timeout_seconds=_parse_int(mapping.get("WEB_RESEARCH_TIMEOUT_SECONDS"), 20),
             max_source_bytes=_parse_int(mapping.get("WEB_RESEARCH_MAX_SOURCE_BYTES"), 200000),
+            summary_source_limit=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_LIMIT"), 10),
+            summary_source_text_chars=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS"), 1200),
+            llm_timeout_seconds=_parse_float(mapping.get("WEB_RESEARCH_LLM_TIMEOUT_SECONDS"), 120.0),
         )
 
     @classmethod
@@ -192,6 +238,9 @@ class WebResearchConfig:
             results_per_query=int(getattr(config_class, "WEB_RESEARCH_RESULTS_PER_QUERY", 5)),
             timeout_seconds=int(getattr(config_class, "WEB_RESEARCH_TIMEOUT_SECONDS", 20)),
             max_source_bytes=int(getattr(config_class, "WEB_RESEARCH_MAX_SOURCE_BYTES", 200000)),
+            summary_source_limit=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_LIMIT", 10)),
+            summary_source_text_chars=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS", 1200)),
+            llm_timeout_seconds=float(getattr(config_class, "WEB_RESEARCH_LLM_TIMEOUT_SECONDS", 120.0)),
         )
 
     def validate(self) -> None:
@@ -207,6 +256,12 @@ class WebResearchConfig:
             raise WebResearchError("WEB_RESEARCH_TIMEOUT_SECONDS must be at least 1")
         if self.max_source_bytes < 1024:
             raise WebResearchError("WEB_RESEARCH_MAX_SOURCE_BYTES must be at least 1024")
+        if self.summary_source_limit < 1:
+            raise WebResearchError("WEB_RESEARCH_SUMMARY_SOURCE_LIMIT must be at least 1")
+        if self.summary_source_text_chars < 200:
+            raise WebResearchError("WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS must be at least 200")
+        if self.llm_timeout_seconds < 1:
+            raise WebResearchError("WEB_RESEARCH_LLM_TIMEOUT_SECONDS must be at least 1")
 
 
 @dataclass
@@ -420,7 +475,7 @@ class WebResearchService:
         self.fetcher = fetcher
         if self.config.enabled:
             if self.llm_client is None:
-                self.llm_client = LLMClient()
+                self.llm_client = LLMClient(timeout=self.config.llm_timeout_seconds)
             if self.search_client is None:
                 self.search_client = SearXNGClient(
                     self.config.searxng_url or "",
@@ -431,6 +486,7 @@ class WebResearchService:
                     timeout_seconds=self.config.timeout_seconds,
                     max_source_bytes=self.config.max_source_bytes,
                 )
+        self._llm_call_events: List[Dict[str, Any]] = []
 
     @staticmethod
     def disabled_metadata() -> Dict[str, Any]:
@@ -454,6 +510,8 @@ class WebResearchService:
         if not self.config.enabled:
             return WebResearchResult(markdown="", metadata=self.disabled_metadata())
 
+        self._llm_call_events = []
+        query_generation = {"mode": "llm", "fallback_reason": None}
         pending_queries = self._generate_initial_queries(document_texts, simulation_requirement, additional_context)
         seen_urls = set()
         searched_queries = set()
@@ -575,6 +633,8 @@ class WebResearchService:
             "group_coverage": group_coverage,
             "sources": sources,
             "summary_path": "web_research.md",
+            "query_generation": query_generation,
+            "llm_call_events": list(self._llm_call_events),
             "error": None,
         }
         return WebResearchResult(markdown=markdown, metadata=metadata)
@@ -609,6 +669,7 @@ class WebResearchService:
             ],
             temperature=0.2,
             max_tokens=1024,
+            call_site="initial_query_generation",
         )
         analogue_queries = self._scenario_analogue_queries(
             document_texts=document_texts,
@@ -711,11 +772,13 @@ class WebResearchService:
         existing_summary: str,
         sources: List[Dict[str, str]],
     ) -> Dict[str, Any]:
+        summary_sources = sources[: self.config.summary_source_limit]
         source_block = "\n\n".join(
             f"[{source['id']}] {source['title']}\n"
             f"Search query: {source.get('query')}\n"
-            f"URL: {source['url']}\nSnippet: {source['snippet']}\nText: {source['text'][:3000]}"
-            for source in sources
+            f"URL: {source['url']}\nSnippet: {source['snippet']}\n"
+            f"Text: {source['text'][: self.config.summary_source_text_chars]}"
+            for source in summary_sources
         )
         response = self._chat_json(
             [
@@ -758,6 +821,7 @@ class WebResearchService:
             ],
             temperature=0.2,
             max_tokens=3072,
+            call_site="source_summarization",
         )
         if not isinstance(response, dict):
             return {
@@ -855,6 +919,7 @@ class WebResearchService:
             ],
             temperature=0.2,
             max_tokens=1024,
+            call_site="research_reflection",
         )
         return response if isinstance(response, dict) else {"knowledge_gap": "", "follow_up_queries": []}
 
@@ -865,11 +930,20 @@ class WebResearchService:
         simulation_requirement: str,
         coverage: Dict[str, List[str]],
     ) -> List[str]:
-        return self._scenario_analogue_queries(
+        queries = self._scenario_analogue_queries(
             document_texts=document_texts,
             simulation_requirement=simulation_requirement,
             coverage=coverage,
         )
+        if queries:
+            return queries
+
+        search_phrase = _fallback_search_phrase(simulation_requirement, document_texts)
+        return _dedupe_strings([
+            f"{search_phrase} recent incidents affected groups",
+            f"{search_phrase} stakeholder public reaction",
+            f"{search_phrase} background source context",
+        ])
 
     def _scenario_analogue_queries(
         self,
@@ -976,15 +1050,132 @@ class WebResearchService:
             raise WebResearchError("LLM client is not configured")
         return self.llm_client
 
-    def _chat_json(self, messages, *, temperature: float, max_tokens: int) -> Any:
-        try:
-            return self._llm().chat_json(
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
+    def _chat_json(self, messages, *, temperature: float, max_tokens: int, call_site: str = "unknown") -> Any:
+        llm = self._llm()
+        started_at = time.monotonic()
+        event = self._llm_event_base(
+            call_site=call_site,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            llm=llm,
+        )
+        if not isinstance(llm, LLMClient):
+            try:
+                result = llm.chat_json(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                self._record_llm_event(event, started_at, status="ok")
+                return result
+            except Exception as exc:
+                recorded = self._record_llm_event(event, started_at, status="error", error=str(exc))
+                raise WebResearchError(
+                    f"Web research LLM JSON call failed at {call_site}: {exc}",
+                    diagnostics=[recorded],
+                ) from exc
+
+        context_name = "fork" if "fork" in multiprocessing.get_all_start_methods() else None
+        mp_context = multiprocessing.get_context(context_name) if context_name else multiprocessing.get_context()
+        result_queue = mp_context.Queue(maxsize=1)
+        process = mp_context.Process(
+            target=_llm_chat_json_worker,
+            kwargs={
+                "result_queue": result_queue,
+                "api_key": llm.api_key,
+                "base_url": llm.base_url,
+                "model": llm.model,
+                "timeout": self.config.llm_timeout_seconds,
+                "max_retries": getattr(llm, "max_retries", None),
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
+        process.daemon = True
+        process.start()
+        process.join(self.config.llm_timeout_seconds)
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+            if process.is_alive():
+                process.kill()
+                process.join(2)
+            recorded = self._record_llm_event(
+                event,
+                started_at,
+                status="timeout",
+                error=(
+                    "Web research LLM JSON call exceeded "
+                    f"WEB_RESEARCH_LLM_TIMEOUT_SECONDS ({self.config.llm_timeout_seconds:g}s)"
+                ),
             )
-        except Exception as exc:
-            raise WebResearchError(f"Web research LLM JSON call failed: {exc}") from exc
+            raise WebResearchError(
+                f"Web research LLM JSON call at {call_site} exceeded WEB_RESEARCH_LLM_TIMEOUT_SECONDS "
+                f"({self.config.llm_timeout_seconds:g}s)",
+                diagnostics=[recorded],
+            )
+
+        try:
+            status, payload = result_queue.get(timeout=1)
+        except queue.Empty as exc:
+            recorded = self._record_llm_event(
+                event,
+                started_at,
+                status="error",
+                error=f"exited without a result (exit code {process.exitcode})",
+            )
+            raise WebResearchError(
+                f"Web research LLM JSON call at {call_site} exited without a result "
+                f"(exit code {process.exitcode})",
+                diagnostics=[recorded],
+            ) from exc
+
+        if status == "ok":
+            self._record_llm_event(event, started_at, status="ok")
+            return payload
+        recorded = self._record_llm_event(event, started_at, status="error", error=str(payload))
+        raise WebResearchError(
+            f"Web research LLM JSON call failed at {call_site}: {payload}",
+            diagnostics=[recorded],
+        )
+
+    def _llm_event_base(
+        self,
+        *,
+        call_site: str,
+        messages,
+        temperature: float,
+        max_tokens: int,
+        llm: Any,
+    ) -> Dict[str, Any]:
+        return {
+            "call_site": call_site,
+            "started_at_epoch": round(time.time(), 3),
+            "timeout_seconds": self.config.llm_timeout_seconds,
+            "max_retries": getattr(llm, "max_retries", None),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "message_count": len(messages) if isinstance(messages, list) else None,
+            "prompt_chars": _messages_char_count(messages),
+        }
+
+    def _record_llm_event(
+        self,
+        event: Dict[str, Any],
+        started_at: float,
+        *,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        recorded = dict(event)
+        recorded["status"] = status
+        recorded["elapsed_seconds"] = round(max(0.0, time.monotonic() - started_at), 3)
+        if error:
+            recorded["error"] = error
+        self._llm_call_events.append(recorded)
+        return recorded
 
 
 def _parse_bool(value: Any) -> bool:
@@ -997,6 +1188,12 @@ def _parse_int(value: Any, default: int) -> int:
     if value is None or str(value).strip() == "":
         return default
     return int(value)
+
+
+def _parse_float(value: Any, default: float) -> float:
+    if value is None or str(value).strip() == "":
+        return default
+    return float(value)
 
 
 def _clean_optional(value: Any) -> Optional[str]:
@@ -1034,6 +1231,36 @@ def _queries_from_response(response: Any, keys: List[str]) -> List[str]:
             if cleaned:
                 queries.append(cleaned)
     return _dedupe_strings(queries)
+
+
+def _messages_char_count(messages: Any) -> int:
+    if not isinstance(messages, list):
+        return 0
+    total = 0
+    for message in messages:
+        if isinstance(message, dict):
+            total += len(str(message.get("content") or ""))
+    return total
+
+
+def _fallback_search_phrase(simulation_requirement: str, document_texts: List[str]) -> str:
+    text = f"{simulation_requirement} {_join_excerpt(document_texts, max_chars=500)}"
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", text)
+    stopwords = {
+        "about", "after", "before", "between", "could", "from", "into", "over",
+        "scenario", "simulation", "their", "there", "these", "those", "through",
+        "what", "when", "where", "which", "while", "with", "would",
+    }
+    keywords = []
+    for token in tokens:
+        cleaned = token.strip("-")
+        key = cleaned.lower()
+        if key in stopwords or key in {item.lower() for item in keywords}:
+            continue
+        keywords.append(cleaned)
+        if len(keywords) >= 8:
+            break
+    return " ".join(keywords) or "scenario public response"
 
 
 def _is_question_like_query(lowered_query: str) -> bool:

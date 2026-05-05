@@ -21,11 +21,14 @@ class LLMClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 300.0
+        timeout: Optional[float] = None,
+        max_retries: Optional[int] = None
     ):
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model = model or Config.LLM_MODEL_NAME
+        self.timeout = timeout if timeout is not None else Config.LLM_TIMEOUT_SECONDS
+        self.max_retries = max_retries if max_retries is not None else Config.LLM_MAX_RETRIES
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
@@ -33,7 +36,8 @@ class LLMClient:
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
-            timeout=timeout,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
         )
 
         # Ollama context window size — prevents prompt truncation.
@@ -48,7 +52,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: Optional[int] = None,
         response_format: Optional[Dict] = None
     ) -> str:
         """
@@ -57,7 +61,8 @@ class LLMClient:
         Args:
             messages: Message list
             temperature: Temperature parameter
-            max_tokens: Max token count
+            max_tokens: Optional max token count. When None, no client-side
+                output token cap is sent.
             response_format: Response format (e.g., JSON mode)
 
         Returns:
@@ -67,8 +72,9 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
         if response_format:
             kwargs["response_format"] = response_format
@@ -89,7 +95,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.3,
-        max_tokens: int = 4096
+        max_tokens: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Send chat request and return JSON
@@ -97,7 +103,8 @@ class LLMClient:
         Args:
             messages: Message list
             temperature: Temperature parameter
-            max_tokens: Max token count
+            max_tokens: Optional max token count. When None, no client-side
+                output token cap is sent.
 
         Returns:
             Parsed JSON object

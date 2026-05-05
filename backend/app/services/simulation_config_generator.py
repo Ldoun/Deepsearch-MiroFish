@@ -12,6 +12,7 @@ Adopt step-by-step generation strategy to avoid failures from generating too lon
 
 import json
 import math
+import os
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -230,13 +231,17 @@ class SimulationConfigGenerator:
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
+        self.llm_timeout_seconds = Config.SIMULATION_CONFIG_LLM_TIMEOUT_SECONDS
+        self.llm_max_retries = Config.LLM_MAX_RETRIES
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=self.llm_timeout_seconds,
+            max_retries=self.llm_max_retries,
         )
     
     def generate_config(
@@ -439,16 +444,21 @@ class SimulationConfigGenerator:
 
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
+                kwargs = {
+                    "model": self.model_name,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
-                )
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.7 - (attempt * 0.1),
+                }
+                if "11434" in (self.base_url or ""):
+                    kwargs["extra_body"] = {
+                        "options": {"num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "8192"))}
+                    }
+
+                response = self.client.chat.completions.create(**kwargs)
 
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
@@ -586,11 +596,7 @@ Field description:
 
         system_prompt = "You are a social media simulation expert. Return pure JSON format, time configuration must follow Chinese work schedule habits."
 
-        try:
-            return self._call_llm_with_retry(prompt, system_prompt)
-        except Exception as e:
-            logger.warning(f"Time config LLM generation failed: {e}, using default configuration")
-            return self._get_default_time_config(num_entities)
+        return self._call_llm_with_retry(prompt, system_prompt)
     
     def _get_default_time_config(self, num_entities: int) -> Dict[str, Any]:
         """Get default time configuration (Chinese work schedule)"""
@@ -649,11 +655,6 @@ Field description:
     ) -> Dict[str, Any]:
         """Generate event configuration"""
 
-        # Get available entity types list for LLM reference
-        entity_types_available = list(set(
-            e.get_entity_type() or "Unknown" for e in entities
-        ))
-
         # List representative entity names for each type
         type_examples = {}
         for e in entities:
@@ -702,16 +703,7 @@ Return JSON format (no markdown):
 
         system_prompt = "You are an opinion analysis expert. Return pure JSON format. Note poster_type must match available entity types precisely."
 
-        try:
-            return self._call_llm_with_retry(prompt, system_prompt)
-        except Exception as e:
-            logger.warning(f"Event config LLM generation failed: {e}, using default configuration")
-            return {
-                "hot_topics": [],
-                "narrative_direction": "",
-                "initial_posts": [],
-                "reasoning": "Using default configuration"
-            }
+        return self._call_llm_with_retry(prompt, system_prompt)
 
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
         """Parse event configuration result"""
@@ -865,22 +857,20 @@ Return JSON format (no markdown):
 
         system_prompt = "You are a social media behavior analysis expert. Return pure JSON, configuration must follow Chinese work schedule habits."
 
-        try:
-            result = self._call_llm_with_retry(prompt, system_prompt)
-            llm_configs = {cfg["agent_id"]: cfg for cfg in result.get("agent_configs", [])}
-        except Exception as e:
-            logger.warning(f"Agent config batch LLM generation failed: {e}, using rule-based generation")
-            llm_configs = {}
+        result = self._call_llm_with_retry(prompt, system_prompt)
+        llm_configs = {cfg["agent_id"]: cfg for cfg in result.get("agent_configs", [])}
+        expected_agent_ids = {start_idx + i for i, _entity in enumerate(entities)}
+        missing_agent_ids = sorted(expected_agent_ids - set(llm_configs))
+        if missing_agent_ids:
+            raise ValueError(
+                f"Agent config LLM response omitted agent configs for ids: {missing_agent_ids}"
+            )
 
         # Build AgentActivityConfig objects
         configs = []
         for i, entity in enumerate(entities):
             agent_id = start_idx + i
-            cfg = llm_configs.get(agent_id, {})
-
-            # If LLM didn't generate, use rule-based generation
-            if not cfg:
-                cfg = self._generate_agent_config_by_rule(entity)
+            cfg = llm_configs[agent_id]
 
             config = AgentActivityConfig(
                 agent_id=agent_id,
@@ -900,88 +890,3 @@ Return JSON format (no markdown):
             configs.append(config)
 
         return configs
-    
-    def _generate_agent_config_by_rule(self, entity: EntityNode) -> Dict[str, Any]:
-        """Generate single agent configuration based on rules (Chinese work schedule)"""
-        entity_type = (entity.get_entity_type() or "Unknown").lower()
-
-        if entity_type in ["university", "governmentagency", "ngo"]:
-            # Official institutions: work hour activity, low frequency, high influence
-            return {
-                "activity_level": 0.2,
-                "posts_per_hour": 0.1,
-                "comments_per_hour": 0.05,
-                "active_hours": list(range(9, 18)),  # 9:00-17:59
-                "response_delay_min": 60,
-                "response_delay_max": 240,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 3.0
-            }
-        elif entity_type in ["mediaoutlet"]:
-            # Media: all-day activity, medium frequency, high influence
-            return {
-                "activity_level": 0.5,
-                "posts_per_hour": 0.8,
-                "comments_per_hour": 0.3,
-                "active_hours": list(range(7, 24)),  # 7:00-23:59
-                "response_delay_min": 5,
-                "response_delay_max": 30,
-                "sentiment_bias": 0.0,
-                "stance": "observer",
-                "influence_weight": 2.5
-            }
-        elif entity_type in ["professor", "expert", "official"]:
-            # Experts/Professors: work + evening activity, medium frequency
-            return {
-                "activity_level": 0.4,
-                "posts_per_hour": 0.3,
-                "comments_per_hour": 0.5,
-                "active_hours": list(range(8, 22)),  # 8:00-21:59
-                "response_delay_min": 15,
-                "response_delay_max": 90,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 2.0
-            }
-        elif entity_type in ["student"]:
-            # Students: mainly evening, high frequency
-            return {
-                "activity_level": 0.8,
-                "posts_per_hour": 0.6,
-                "comments_per_hour": 1.5,
-                "active_hours": [8, 9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23],  # Morning + evening
-                "response_delay_min": 1,
-                "response_delay_max": 15,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 0.8
-            }
-        elif entity_type in ["alumni"]:
-            # Alumni: mainly evening
-            return {
-                "activity_level": 0.6,
-                "posts_per_hour": 0.4,
-                "comments_per_hour": 0.8,
-                "active_hours": [12, 13, 19, 20, 21, 22, 23],  # Lunch break + evening
-                "response_delay_min": 5,
-                "response_delay_max": 30,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 1.0
-            }
-        else:
-            # Ordinary people: evening peak
-            return {
-                "activity_level": 0.7,
-                "posts_per_hour": 0.5,
-                "comments_per_hour": 1.2,
-                "active_hours": [9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23],  # Daytime + evening
-                "response_delay_min": 2,
-                "response_delay_max": 20,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 1.0
-            }
-    
-

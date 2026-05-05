@@ -9,6 +9,7 @@ entities and relations from text chunks, guided by the graph's ontology.
 import logging
 from typing import Dict, Any, List, Optional
 
+from ..config import Config
 from ..utils.llm_client import LLMClient
 
 logger = logging.getLogger('mirofish.ner_extractor')
@@ -46,9 +47,16 @@ _USER_PROMPT = """Extract entities and relations from the following text:
 class NERExtractor:
     """Extract entities and relations from text using local LLM."""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None, max_retries: int = 2):
-        self.llm = llm_client or LLMClient()
-        self.max_retries = max_retries
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        max_retries: Optional[int] = None,
+    ):
+        self.llm = llm_client or LLMClient(
+            timeout=Config.GRAPH_NER_LLM_TIMEOUT_SECONDS,
+            max_retries=Config.GRAPH_NER_LLM_MAX_RETRIES,
+        )
+        self.max_retries = Config.GRAPH_NER_MAX_RETRIES if max_retries is None else max_retries
 
     def extract(self, text: str, ontology: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -83,7 +91,6 @@ class NERExtractor:
                 result = self.llm.chat_json(
                     messages=messages,
                     temperature=0.1,  # Low temp for extraction precision
-                    max_tokens=4096,
                 )
                 return self._validate_and_clean(result, ontology)
 
@@ -101,7 +108,7 @@ class NERExtractor:
         logger.error(
             f"NER extraction failed after {self.max_retries + 1} attempts: {last_error}"
         )
-        return {"entities": [], "relations": []}
+        raise RuntimeError("NER extraction failed; graph construction cannot continue") from last_error
 
     def _format_ontology(self, ontology: Dict[str, Any]) -> str:
         """Format ontology dict into readable text for the LLM prompt."""

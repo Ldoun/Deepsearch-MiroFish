@@ -28,6 +28,23 @@ def _env_int(name: str, default: int) -> int:
     return int(value)
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or str(value).strip() == '':
+        return default
+    return float(value)
+
+
+def _env_csv(name: str):
+    value = os.environ.get(name)
+    if value is None or value.strip() == '':
+        return None
+    cleaned = value.strip()
+    if cleaned.lower() in {'all', '*'}:
+        return None
+    return [item.strip() for item in cleaned.split(',') if item.strip()]
+
+
 class Config:
     """Flask configuration class"""
 
@@ -42,6 +59,8 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'qwen2.5:32b')
+    LLM_TIMEOUT_SECONDS = _env_float('LLM_TIMEOUT_SECONDS', 300.0)
+    LLM_MAX_RETRIES = _env_int('LLM_MAX_RETRIES', 2)
 
     # Neo4j configuration
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
@@ -58,12 +77,19 @@ class Config:
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
 
     # Text processing configuration
-    DEFAULT_CHUNK_SIZE = 500  # Default chunk size
-    DEFAULT_CHUNK_OVERLAP = 50  # Default overlap size
+    DEFAULT_CHUNK_SIZE = _env_int('DEFAULT_CHUNK_SIZE', 500)  # Default chunk size
+    DEFAULT_CHUNK_OVERLAP = _env_int('DEFAULT_CHUNK_OVERLAP', 50)  # Default overlap size
+    GRAPH_NER_MAX_RETRIES = _env_int('GRAPH_NER_MAX_RETRIES', 2)
+    GRAPH_NER_LLM_TIMEOUT_SECONDS = _env_float('GRAPH_NER_LLM_TIMEOUT_SECONDS', LLM_TIMEOUT_SECONDS)
+    GRAPH_NER_LLM_MAX_RETRIES = _env_int('GRAPH_NER_LLM_MAX_RETRIES', LLM_MAX_RETRIES)
 
     # OASIS simulation configuration
     OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
     OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    SIMULATION_PREPARE_USE_LLM_PROFILES = _env_bool('SIMULATION_PREPARE_USE_LLM_PROFILES', 'true')
+    SIMULATION_PREPARE_ENTITY_TYPES = _env_csv('SIMULATION_PREPARE_ENTITY_TYPES')
+    SIMULATION_PREPARE_PARALLEL_PROFILE_COUNT = _env_int('SIMULATION_PREPARE_PARALLEL_PROFILE_COUNT', 5)
+    SIMULATION_CONFIG_LLM_TIMEOUT_SECONDS = _env_float('SIMULATION_CONFIG_LLM_TIMEOUT_SECONDS', LLM_TIMEOUT_SECONDS)
 
     # OASIS platform available actions configuration
     OASIS_TWITTER_ACTIONS = [
@@ -88,6 +114,9 @@ class Config:
     WEB_RESEARCH_RESULTS_PER_QUERY = _env_int('WEB_RESEARCH_RESULTS_PER_QUERY', 5)
     WEB_RESEARCH_TIMEOUT_SECONDS = _env_int('WEB_RESEARCH_TIMEOUT_SECONDS', 20)
     WEB_RESEARCH_MAX_SOURCE_BYTES = _env_int('WEB_RESEARCH_MAX_SOURCE_BYTES', 200000)
+    WEB_RESEARCH_SUMMARY_SOURCE_LIMIT = _env_int('WEB_RESEARCH_SUMMARY_SOURCE_LIMIT', 10)
+    WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS = _env_int('WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS', 1200)
+    WEB_RESEARCH_LLM_TIMEOUT_SECONDS = _env_float('WEB_RESEARCH_LLM_TIMEOUT_SECONDS', 120.0)
 
     @classmethod
     def validate(cls):

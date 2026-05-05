@@ -243,6 +243,7 @@ def generate_ontology():
                     "source_count": 0,
                     "sources": [],
                     "summary_path": None,
+                    "llm_call_events": getattr(exc, "diagnostics", []),
                     "error": str(exc),
                 }
             }), 502
@@ -276,11 +277,20 @@ def generate_ontology():
         # Generate ontology
         logger.info("Calling LLM to generate ontology definition...")
         generator = OntologyGenerator()
-        ontology = generator.generate(
-            document_texts=document_texts,
-            simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
-        )
+        try:
+            ontology = generator.generate(
+                document_texts=document_texts,
+                simulation_requirement=simulation_requirement,
+                additional_context=additional_context if additional_context else None
+            )
+        except Exception as exc:
+            ProjectManager.delete_project(project.project_id)
+            return jsonify({
+                "success": False,
+                "error": str(exc),
+                "failure_reason": "ontology_llm_failed",
+                "web_research": research_result.metadata,
+            }), 502
 
         # Save ontology to project
         entity_count = len(ontology.get("entity_types", []))
