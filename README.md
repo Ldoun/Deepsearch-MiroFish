@@ -66,8 +66,8 @@ ngrok http 3000
 
 ## Prerequisites
 
-- Conda
 - Python 3.11
+- uv
 - Node.js 18+ and npm
 - Docker, for local Neo4j and SearXNG
 - Ollama, running on the host machine
@@ -75,66 +75,58 @@ ngrok http 3000
 Pull the default local models:
 
 ```bash
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:32b
 ollama pull nomic-embed-text
 ```
 
-You can use a larger chat model by setting `LLM_MODEL_NAME`, for example `qwen2.5:14b` or `qwen2.5:32b`, if your hardware can run it.
+The default model in `.env.example` and `backend/app/config.py` is `qwen2.5:32b`. If your hardware cannot run it reliably, set `LLM_MODEL_NAME=qwen2.5:14b`.
 
-## Recommended Run Path In This Workspace
+## Recommended Local Run
 
-From the parent workspace root:
-
-```bash
-cd /path/to/persona_simulation
-./scripts/run_local_mirofish.sh
-```
-
-The script starts or checks:
-
-- SearXNG on port `8080`
-- Neo4j on ports `7474` and `7687`
-- Flask backend on port `5001`
-- Vue frontend on port `3000`
-
-It uses the Conda environment named `mirofish` by default.
-
-Useful overrides:
+Install the JavaScript and Python dependencies from the repository root:
 
 ```bash
-CONDA_ENV=mirofish \
-LLM_MODEL_NAME=qwen2.5:14b \
-FRONTEND_PORT=3000 \
-FLASK_PORT=5001 \
-./scripts/run_local_mirofish.sh
+npm run setup:all
 ```
 
-If you only want the backend:
+Start Neo4j, SearXNG, and Ollama as described below, then run the app:
 
 ```bash
-START_FRONTEND=false ./scripts/run_local_mirofish.sh
+npm run dev
 ```
+
+The root package scripts are:
+
+- `npm run dev`: start backend and frontend together.
+- `npm run backend`: start the Flask backend with `uv run python run.py`.
+- `npm run frontend`: start the Vite frontend.
+- `npm run build`: build the frontend.
 
 ## Manual Setup
 
-Run these commands from the `MiroFish-Offline` directory unless noted otherwise.
+Run these commands from the repository root.
 
-### 1. Create the Python environment
+### 1. Install dependencies
 
 ```bash
-conda create -n mirofish python=3.11 -y
-conda run -n mirofish pip install -r backend/requirements.txt
+npm run setup:all
 ```
 
-### 2. Install frontend dependencies
+This installs root and frontend npm packages, then runs `uv sync` in `backend/`.
+
+If you prefer to run the steps manually:
 
 ```bash
+npm install
 cd frontend
 npm install
 cd ..
+cd backend
+uv sync
+cd ..
 ```
 
-### 3. Start Ollama
+### 2. Start Ollama
 
 ```bash
 ollama serve
@@ -143,11 +135,17 @@ ollama serve
 In another terminal:
 
 ```bash
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:32b
 ollama pull nomic-embed-text
 ```
 
-### 4. Start Neo4j
+Use a smaller model if needed:
+
+```bash
+ollama pull qwen2.5:14b
+```
+
+### 3. Start Neo4j
 
 ```bash
 docker run -d \
@@ -162,7 +160,7 @@ docker run -d \
   docker.io/library/neo4j:5.18-community
 ```
 
-### 5. Start SearXNG with JSON enabled
+### 4. Start SearXNG with JSON enabled
 
 ```bash
 mkdir -p .cache/searxng
@@ -184,18 +182,18 @@ docker run -d \
   docker.io/searxng/searxng:latest
 ```
 
-### 6. Configure environment variables
+### 5. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Default local values:
+Then make sure `.env` contains the web research and runtime values below. These are required because the backend defaults `WEB_RESEARCH_ENABLED` to `false`, and prompt-only project creation requires web research to be enabled.
 
 ```bash
 LLM_API_KEY=ollama
 LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL_NAME=qwen2.5:14b
+LLM_MODEL_NAME=qwen2.5:32b
 OLLAMA_NUM_CTX=8192
 
 EMBEDDING_MODEL=nomic-embed-text
@@ -213,11 +211,17 @@ OPENAI_API_BASE_URL=http://localhost:11434/v1
 FLASK_PORT=5001
 ```
 
-### 7. Start the backend
+For lower-resource machines, use:
+
+```bash
+LLM_MODEL_NAME=qwen2.5:14b
+```
+
+### 6. Start the backend
 
 ```bash
 cd backend
-conda run -n mirofish --no-capture-output python run.py
+uv run python run.py
 ```
 
 The backend should respond at:
@@ -226,7 +230,7 @@ The backend should respond at:
 curl http://localhost:5001/health
 ```
 
-### 8. Start the frontend
+### 7. Start the frontend
 
 In another terminal:
 
@@ -243,13 +247,7 @@ http://localhost:3000
 
 ## Docker Compose Notes
 
-`docker-compose.yml` starts the app, Neo4j, and Ollama containers, but the current web research flow also needs a JSON-enabled SearXNG service. For the most complete local run in this workspace, prefer the helper script from the parent workspace root:
-
-```bash
-./scripts/run_local_mirofish.sh
-```
-
-If you use Docker Compose directly, make sure SearXNG is also running and set:
+`docker-compose.yml` starts the app, Neo4j, and Ollama containers. The current web research flow also needs a JSON-enabled SearXNG service, so start SearXNG separately and set:
 
 ```bash
 WEB_RESEARCH_ENABLED=true
@@ -270,7 +268,6 @@ Minimum practical development setup:
 Model guidance:
 
 - `qwen2.5:14b`: lighter local development
-- `qwen2.5:14b`: better quality if hardware allows
 - `qwen2.5:32b`: heavier runs with stronger reasoning, requires substantially more memory
 
 ## Troubleshooting
@@ -298,7 +295,7 @@ If the first research or ontology request is slow, Ollama may be cold-starting t
 ```bash
 curl http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen2.5:14b","prompt":"ping","stream":false}'
+  -d '{"model":"qwen2.5:32b","prompt":"ping","stream":false}'
 ```
 
 ## Credits
