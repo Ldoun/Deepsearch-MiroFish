@@ -75,7 +75,7 @@ ngrok http 3000
 Pull the default local models:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:14b
 ollama pull nomic-embed-text
 ```
 
@@ -103,7 +103,7 @@ Useful overrides:
 
 ```bash
 CONDA_ENV=mirofish \
-LLM_MODEL_NAME=qwen2.5:7b \
+LLM_MODEL_NAME=qwen2.5:14b \
 FRONTEND_PORT=3000 \
 FLASK_PORT=5001 \
 ./scripts/run_local_mirofish.sh
@@ -143,7 +143,7 @@ ollama serve
 In another terminal:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:14b
 ollama pull nomic-embed-text
 ```
 
@@ -195,7 +195,7 @@ Default local values:
 ```bash
 LLM_API_KEY=ollama
 LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL_NAME=qwen2.5:7b
+LLM_MODEL_NAME=qwen2.5:14b
 OLLAMA_NUM_CTX=8192
 
 EMBEDDING_MODEL=nomic-embed-text
@@ -269,7 +269,7 @@ Minimum practical development setup:
 
 Model guidance:
 
-- `qwen2.5:7b`: lighter local development
+- `qwen2.5:14b`: lighter local development
 - `qwen2.5:14b`: better quality if hardware allows
 - `qwen2.5:32b`: heavier runs with stronger reasoning, requires substantially more memory
 
@@ -298,12 +298,8 @@ If the first research or ontology request is slow, Ollama may be cold-starting t
 ```bash
 curl http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen2.5:7b","prompt":"ping","stream":false}'
+  -d '{"model":"qwen2.5:14b","prompt":"ping","stream":false}'
 ```
-
-## License
-
-AGPL-3.0. See [LICENSE](./LICENSE).
 
 ## Credits
 
