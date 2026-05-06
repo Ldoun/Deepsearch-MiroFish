@@ -205,8 +205,8 @@ class WebResearchConfig:
     results_per_query: int = 5
     timeout_seconds: int = 20
     max_source_bytes: int = 200000
-    summary_source_limit: int = 10
-    summary_source_text_chars: int = 1200
+    summary_source_limit: int = 24
+    summary_source_text_chars: int = 4000
     llm_timeout_seconds: float = 120.0
 
     @classmethod
@@ -219,8 +219,8 @@ class WebResearchConfig:
             results_per_query=_parse_int(mapping.get("WEB_RESEARCH_RESULTS_PER_QUERY"), 5),
             timeout_seconds=_parse_int(mapping.get("WEB_RESEARCH_TIMEOUT_SECONDS"), 20),
             max_source_bytes=_parse_int(mapping.get("WEB_RESEARCH_MAX_SOURCE_BYTES"), 200000),
-            summary_source_limit=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_LIMIT"), 10),
-            summary_source_text_chars=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS"), 1200),
+            summary_source_limit=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_LIMIT"), 24),
+            summary_source_text_chars=_parse_int(mapping.get("WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS"), 4000),
             llm_timeout_seconds=_parse_float(mapping.get("WEB_RESEARCH_LLM_TIMEOUT_SECONDS"), 120.0),
         )
 
@@ -238,8 +238,8 @@ class WebResearchConfig:
             results_per_query=int(getattr(config_class, "WEB_RESEARCH_RESULTS_PER_QUERY", 5)),
             timeout_seconds=int(getattr(config_class, "WEB_RESEARCH_TIMEOUT_SECONDS", 20)),
             max_source_bytes=int(getattr(config_class, "WEB_RESEARCH_MAX_SOURCE_BYTES", 200000)),
-            summary_source_limit=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_LIMIT", 10)),
-            summary_source_text_chars=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS", 1200)),
+            summary_source_limit=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_LIMIT", 24)),
+            summary_source_text_chars=int(getattr(config_class, "WEB_RESEARCH_SUMMARY_SOURCE_TEXT_CHARS", 4000)),
             llm_timeout_seconds=float(getattr(config_class, "WEB_RESEARCH_LLM_TIMEOUT_SECONDS", 120.0)),
         )
 

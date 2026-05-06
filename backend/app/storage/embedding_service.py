@@ -24,13 +24,13 @@ class EmbeddingService:
         self,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
-        max_retries: int = 3,
-        timeout: int = 30,
+        max_retries: Optional[int] = None,
+        timeout: Optional[float] = None,
     ):
         self.model = model or Config.EMBEDDING_MODEL
         self.base_url = (base_url or Config.EMBEDDING_BASE_URL).rstrip('/')
-        self.max_retries = max_retries
-        self.timeout = timeout
+        self.max_retries = Config.EMBEDDING_MAX_RETRIES if max_retries is None else max_retries
+        self.timeout = Config.EMBEDDING_TIMEOUT_SECONDS if timeout is None else timeout
         self._embed_url = f"{self.base_url}/api/embed"
 
         # Simple in-memory cache (text -> embedding vector)

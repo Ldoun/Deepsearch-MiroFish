@@ -469,8 +469,8 @@ class OasisProfileGenerator:
                 entity_name, entity_type, entity_summary, entity_attributes, context
             )
 
-        # Try multiple times until successful or max retry attempts reached
-        max_attempts = 3
+        # Required local LLM failures must honor the configured retry policy.
+        max_attempts = max(1, self.llm_max_retries + 1)
         last_error = None
 
         for attempt in range(max_attempts):
@@ -482,7 +482,7 @@ class OasisProfileGenerator:
                         {"role": "user", "content": prompt}
                     ],
                     response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
+                    temperature=max(0.0, 0.7 - (attempt * 0.1))
                 )
 
                 content = response.choices[0].message.content
@@ -519,8 +519,9 @@ class OasisProfileGenerator:
             except Exception as e:
                 logger.warning(f"LLM call failed (attempt {attempt+1}): {str(e)[:80]}")
                 last_error = e
-                import time
-                time.sleep(1 * (attempt + 1))  # Exponential backoff
+                if attempt + 1 < max_attempts:
+                    import time
+                    time.sleep(1 * (attempt + 1))
 
         raise RuntimeError(
             f"LLM persona generation failed after {max_attempts} attempts"

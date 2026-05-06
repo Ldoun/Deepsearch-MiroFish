@@ -169,14 +169,17 @@ def split_text_into_chunks(
     while start < len(text):
         end = start + chunk_size
 
-        # Try to split at sentence boundaries
+        # Try to split at the sentence boundary closest to the target end.
         if end < len(text):
-            # Find nearest sentence ending
+            best_end = None
             for sep in ['。', '！', '？', '.\n', '!\n', '?\n', '\n\n', '. ', '! ', '? ']:
                 last_sep = text[start:end].rfind(sep)
                 if last_sep != -1 and last_sep > chunk_size * 0.3:
-                    end = start + last_sep + len(sep)
-                    break
+                    candidate_end = start + last_sep + len(sep)
+                    if best_end is None or candidate_end > best_end:
+                        best_end = candidate_end
+            if best_end is not None:
+                end = best_end
 
         chunk = text[start:end].strip()
         if chunk:
@@ -186,4 +189,3 @@ def split_text_into_chunks(
         start = end - overlap if end < len(text) else len(text)
 
     return chunks
-

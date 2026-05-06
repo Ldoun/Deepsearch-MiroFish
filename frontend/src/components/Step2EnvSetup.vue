@@ -781,9 +781,7 @@ const startPrepareSimulation = async () => {
   
   try {
     const res = await prepareSimulation({
-      simulation_id: props.simulationId,
-      use_llm_for_profiles: true,
-      parallel_profile_count: 5
+      simulation_id: props.simulationId
     })
     
     if (res.success && res.data) {

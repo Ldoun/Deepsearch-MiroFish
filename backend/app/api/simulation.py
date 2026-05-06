@@ -455,8 +455,16 @@ def prepare_simulation():
         document_text = ProjectManager.get_extracted_text(state.project_id) or ""
         
         entity_types_list = data.get('entity_types')
-        use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
+        if entity_types_list is None:
+            entity_types_list = Config.SIMULATION_PREPARE_ENTITY_TYPES
+        use_llm_for_profiles = data.get(
+            'use_llm_for_profiles',
+            Config.SIMULATION_PREPARE_USE_LLM_PROFILES,
+        )
+        parallel_profile_count = data.get(
+            'parallel_profile_count',
+            Config.SIMULATION_PREPARE_PARALLEL_PROFILE_COUNT,
+        )
         
         # ========== Get GraphStorage（Capture reference before background task starts） ==========
         storage = current_app.extensions.get('neo4j_storage')
@@ -2196,7 +2204,7 @@ def interview_agent():
         agent_id = data.get('agent_id')
         prompt = data.get('prompt')
         platform = data.get('platform')  # Optional：twitter/reddit/None
-        timeout = data.get('timeout', 60)
+        timeout = data.get('timeout', Config.SIMULATION_IPC_TIMEOUT_SECONDS)
         
         if not simulation_id:
             return jsonify({
@@ -2317,7 +2325,7 @@ def interview_agents_batch():
         simulation_id = data.get('simulation_id')
         interviews = data.get('interviews')
         platform = data.get('platform')  # Optional：twitter/reddit/None
-        timeout = data.get('timeout', 120)
+        timeout = data.get('timeout', Config.SIMULATION_IPC_TIMEOUT_SECONDS)
 
         if not simulation_id:
             return jsonify({
@@ -2444,7 +2452,7 @@ def interview_all_agents():
         simulation_id = data.get('simulation_id')
         prompt = data.get('prompt')
         platform = data.get('platform')  # Optional：twitter/reddit/None
-        timeout = data.get('timeout', 180)
+        timeout = data.get('timeout', Config.SIMULATION_IPC_TIMEOUT_SECONDS)
 
         if not simulation_id:
             return jsonify({

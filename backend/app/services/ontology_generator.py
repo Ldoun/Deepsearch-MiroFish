@@ -242,8 +242,10 @@ class OntologyGenerator:
 
         return result
 
-    # Maximum text length for LLM. Local Ollama models can hang on very large enriched research seeds.
-    MAX_TEXT_LENGTH_FOR_LLM = 12000
+    # Model-context guard for enriched research seeds. This is intentionally
+    # large enough for demo-quality web research input and no longer the older
+    # 12000-character speed cap.
+    MAX_TEXT_LENGTH_FOR_LLM = 64000
 
     def _build_user_message(
         self,

@@ -199,11 +199,7 @@ class Neo4jStorage(GraphStorage):
         all_embeddings: list = []
         if all_texts_to_embed:
             logger.info(f"[add_text] Batch-embedding {len(all_texts_to_embed)} texts...")
-            try:
-                all_embeddings = self._embedding.embed_batch(all_texts_to_embed)
-            except Exception as e:
-                logger.warning(f"[add_text] Batch embedding failed, falling back to empty: {e}")
-                all_embeddings = [[] for _ in all_texts_to_embed]
+            all_embeddings = self._embedding.embed_batch(all_texts_to_embed)
 
         entity_embeddings = all_embeddings[:len(entities)]
         relation_embeddings = all_embeddings[len(entities):]

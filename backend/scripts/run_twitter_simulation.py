@@ -131,6 +131,60 @@ except ImportError as e:
     sys.exit(1)
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from exc
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def get_simulation_llm_timeout_seconds() -> float:
+    return _env_float(
+        "SIMULATION_LLM_TIMEOUT_SECONDS",
+        _env_float("LLM_TIMEOUT_SECONDS", _env_float("MODEL_TIMEOUT", 180.0)),
+    )
+
+
+def get_simulation_llm_max_retries() -> int:
+    return _env_int("SIMULATION_LLM_MAX_RETRIES", 0)
+
+
+def install_oasis_llm_fail_fast() -> None:
+    """Make OASIS/CAMEL per-agent LLM failures abort the simulation run."""
+    from oasis.social_agent.agent import SocialAgent
+
+    original = SocialAgent.perform_action_by_llm
+    if getattr(original, "_mirofish_fail_fast", False):
+        return
+
+    async def fail_fast_perform_action_by_llm(self, *args, **kwargs):
+        result = await original(self, *args, **kwargs)
+        if isinstance(result, BaseException):
+            agent_id = getattr(self, "social_agent_id", "unknown")
+            raise RuntimeError(f"OASIS LLM action failed for agent {agent_id}") from result
+        return result
+
+    fail_fast_perform_action_by_llm._mirofish_fail_fast = True
+    fail_fast_perform_action_by_llm._mirofish_original = original
+    SocialAgent.perform_action_by_llm = fail_fast_perform_action_by_llm
+
+
+install_oasis_llm_fail_fast()
+
+
 # IPC-related constants
 IPC_COMMANDS_DIR = "ipc_commands"
 IPC_RESPONSES_DIR = "ipc_responses"
@@ -452,11 +506,23 @@ class TwitterSimulationRunner:
         if llm_base_url:
             os.environ["OPENAI_API_BASE_URL"] = llm_base_url
         
-        print(f"LLM configuration: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else 'default'}...")
+        timeout_seconds = get_simulation_llm_timeout_seconds()
+        max_retries = get_simulation_llm_max_retries()
+        os.environ["MODEL_TIMEOUT"] = str(timeout_seconds)
+
+        print(
+            f"LLM configuration: model={llm_model}, "
+            f"base_url={llm_base_url[:40] if llm_base_url else 'default'}..., "
+            f"timeout={timeout_seconds:g}s, max_retries={max_retries}"
+        )
         
         return ModelFactory.create(
             model_platform=ModelPlatformType.OPENAI,
             model_type=llm_model,
+            api_key=llm_api_key or None,
+            url=llm_base_url or None,
+            timeout=timeout_seconds,
+            max_retries=max_retries,
         )
     
     def _get_active_agents_for_round(

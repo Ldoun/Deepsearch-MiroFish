@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 from ..storage import GraphStorage
+from ..config import Config
 
 logger = get_logger('mirofish.graph_tools')
 
@@ -1166,7 +1167,7 @@ Return the sub-questions as a JSON list."""
                 simulation_id=simulation_id,
                 interviews=interviews_request,
                 platform=None,
-                timeout=180.0
+                timeout=Config.SIMULATION_IPC_TIMEOUT_SECONDS
             )
 
             logger.info(f"Interview API returned: {api_result.get('interviews_count', 0)} results, success={api_result.get('success')}")
