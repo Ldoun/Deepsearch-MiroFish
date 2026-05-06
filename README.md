@@ -29,6 +29,22 @@ The default stack is local-first:
 
 No `ZEP_API_KEY` is required. No real cloud `LLM_API_KEY` is required for the default local Ollama setup.
 
+## Demo
+
+![Deepsearch MiroFish demo](docs/assets/demo/deepsearch-mirofish-demo.gif)
+
+The demo flow starts from a scenario prompt, generates a web research seed, builds the simulation environment, runs multi-agent interaction, and reaches report-grounded follow-up.
+
+| Scenario input | Agent setup |
+| --- | --- |
+| ![Scenario prompt screen](docs/assets/demo/01-scenario-prompt.jpg) | ![Agent setup screen](docs/assets/demo/02-agent-setup.jpg) |
+
+| Simulation timeline | Report interaction |
+| --- | --- |
+| ![Simulation timeline screen](docs/assets/demo/03-simulation-timeline.jpg) | ![Report interaction screen](docs/assets/demo/04-report-interaction.jpg) |
+
+The repository also includes a social preview candidate at `docs/assets/social/social-preview.png` for GitHub repository settings.
+
 ## Built Upon
 
 This project is built upon and adapted from:
