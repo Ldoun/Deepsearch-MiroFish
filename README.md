@@ -4,6 +4,8 @@
 
 **Prompt-driven web research seeds for local multi-agent social simulation.**
 
+![Deepsearch MiroFish social preview](docs/assets/social/social-preview.png)
+
 </div>
 
 ## What This Project Does
