@@ -10,7 +10,7 @@
 
 Deepsearch MiroFish turns a scenario prompt into a source-grounded research seed, then uses that seed to prepare and run a local social simulation.
 
-Instead of asking the user to upload a "reality seed" document, the app performs web research first:
+Its main contribution over MiroFish and MiroFish-Offline is replacing manual "reality seed" preparation with an automated web research seed pipeline. Instead of asking the user to upload background documents, the app performs web research first:
 
 1. The user enters a scenario prompt.
 2. The backend generates search queries and uses SearXNG to retrieve web results.
@@ -28,6 +28,18 @@ The default stack is local-first:
 - Simulation runtime: OASIS / CAMEL components
 
 No `ZEP_API_KEY` is required. No real cloud `LLM_API_KEY` is required for the default local Ollama setup.
+
+## Core Contribution
+
+MiroFish provides the social simulation workflow, and MiroFish-Offline makes that workflow local-first with Neo4j and Ollama. Deepsearch MiroFish adds a prompt-to-research-seed layer in front of that workflow:
+
+- Generates scenario-specific search queries from the user's prompt.
+- Uses SearXNG to retrieve public web results.
+- Fetches and summarizes source pages into an enriched `web_research.md` seed.
+- Captures groups, incidents, and scenario relationships that influence the simulation setup.
+- Feeds the generated markdown seed into ontology generation and graph construction as the starting corpus.
+
+This is intended to reduce the manual research burden before simulation while keeping the downstream graph, simulation, and report workflow local.
 
 ## Demo
 
@@ -52,7 +64,7 @@ This project is built upon and adapted from:
 - Original MiroFish: https://github.com/666ghj/MiroFish
 - MiroFish-Offline fork: https://github.com/nikmcfly/MiroFish-Offline
 
-The current workspace continues the offline fork with prompt-driven web research seed generation and the Deepsearch MiroFish frontend positioning.
+Compared with those upstream projects, this repo's differentiating layer is the automated web research seed generation before ontology, graph construction, simulation, and report generation.
 
 ## Workflow
 
