@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="./static/image/mirofish-offline-banner.png" alt="Deepsearch MiroFish" width="100%"/>
-
 # Deepsearch MiroFish
 
 **Prompt-driven web research seeds for local multi-agent social simulation.**
